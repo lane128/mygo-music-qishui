@@ -2,7 +2,7 @@
 
 为 [MyGO Music](https://github.com/egoist/mygo-music) 接入汽水音乐，使用汽水音乐 App 扫码登录。
 
-源码版本 **1.0.1** 已接入音乐内容。GitHub Release 暂仍为仅含登录功能的 1.0.0，仓库安装会获取该已发布版本；测试音乐功能请使用 1.0.1 完整 ZIP。若提示同名插件已安装，先在 MyGO 移除旧插件再导入，插件数据会保留。
+**1.0.1** 已接入个人歌单、歌曲搜索、推荐、歌词和播放。
 
 ## 安装
 
@@ -12,6 +12,8 @@
 
 - 在 MyGO「设置 → 插件 → +」中输入仓库地址：`https://github.com/lane128/mygo-music-qishui`。
 - 从 [Releases](https://github.com/lane128/mygo-music-qishui/releases/latest) 下载 `plugin-darwin-arm64.zip`，在上述入口选择 ZIP 导入。
+
+通过仓库安装后，可在插件菜单中「检查更新」。ZIP 导入显示「来自本机」，需先移除插件，再通过仓库安装以启用更新；MyGO 会保留插件数据。
 
 也可以在 [MyGO 插件目录](https://music.egoist.dev/zh/plugins) 查找此插件；新发布的仓库需要等待 GitHub 索引。
 
