@@ -20,6 +20,25 @@ globalThis.fetch = async (url, options) => {
   if (parsed.pathname === '/luna/pc/me/playlist') return json({ playlists: [playlist] })
   if (parsed.pathname === '/luna/pc/playlist/detail') return json({ playlist, media_resources: [{ type: 'track', entity: { track_wrapper: { track } } }], has_more: false })
   if (parsed.pathname === '/luna/search/track') return json({ result_groups: [{ data: [{ entity: { track } }], has_more: false }] })
+  if (parsed.pathname === '/luna/pc/feed/mode') {
+    assert.ok(options.headers['x-helios'])
+    assert.ok(options.headers['x-medusa'])
+    assert.equal(options.method, 'POST')
+    assert.deepEqual(JSON.parse(options.body), {})
+    return json({ feed_mode_block: [{ title: '心情', feed_mode: [{ type: 'scene_mode', text: 'Fixture Mode', entity: { feed_scene_mode: { scene_mode_id: 0 } } }] }] })
+  }
+  if (parsed.pathname === '/luna/pc/feed/song-tab') {
+    assert.ok(options.headers['x-helios'])
+    assert.ok(options.headers['x-medusa'])
+    const body = JSON.parse(options.body)
+    assert.equal(body.feed_preference.scene_mode_id, 0)
+    assert.equal(body.is_did_first_request, false)
+    assert.equal(body.did_first_use_time, undefined)
+    assert.equal(body.feed_counts.mix_session_count, 2)
+    assert.equal(body.played_media[0].played_mills, -1)
+    assert.equal(body.played_media[0].duration, 180)
+    return json({ items: [{ type: 'track', entity: { track_wrapper: { track } } }] })
+  }
   if (parsed.pathname === '/luna/pc/track_v2') {
     assert.ok(options.headers['x-helios'])
     assert.ok(options.headers['x-medusa'])

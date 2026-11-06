@@ -37,6 +37,32 @@ test('actual worker serves catalog results and remains usable after an unsupport
   }
 })
 
+// The packaged worker must sign mode discovery and scene-specific continuations using the actual SDK.
+test('packaged worker signs listening modes and recommendation continuations', { skip: !nativeReady }, async () => {
+  const child = spawn(process.execPath, ['--import', fileURLToPath(new URL('./fixtures/music-service.mjs', import.meta.url)), fileURLToPath(new URL('../helper/worker.mjs', import.meta.url))], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } })
+  const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]()
+  const exit = new Promise(resolve => child.once('exit', code => resolve(code)))
+  const timer = setTimeout(() => child.kill('SIGKILL'), 20000)
+  const request = async (method, params = {}) => {
+    child.stdin.write(JSON.stringify({ op: 'music', session, method, params }) + '\n')
+    return JSON.parse((await lines.next()).value)
+  }
+  try {
+    const modes = await request('modes')
+    assert.equal(modes.ok, true)
+    assert.equal(modes.result[2].id, 'scene:0')
+    const batch = await request('feed', { id: modes.result[2].id, count: 2, firstDeviceRequest: true, firstUseTime: 1700000000, played: [{ id: '2', duration: 180999 }] })
+    assert.equal(batch.ok, true)
+    assert.equal(batch.result[0].id, '7123456789012345678')
+    assert.equal(batch.result[0].duration, 180000)
+    assert.equal((await request('feed', { id: 'scene:-1' })).error, 'response')
+  } finally {
+    child.stdin.end()
+    assert.equal(await exit, 0)
+    clearTimeout(timer)
+  }
+})
+
 // The complete ZIP signs a fixture grant with its real native SDK and serves only authorized bytes.
 test('packaged worker signs and bridges granted audio until stdin closes', { skip: !nativeReady }, async () => {
   const child = spawn(process.execPath, ['--import', fileURLToPath(new URL('./fixtures/music-service.mjs', import.meta.url)), fileURLToPath(new URL('../helper/worker.mjs', import.meta.url))], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } })

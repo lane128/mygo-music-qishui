@@ -74,9 +74,8 @@ try {
             if (!ended) send({ ok: true, ...page })
             continue
           }
-          case 'browse':
-            if (params.page !== 'recommendations') throw error('unsupported')
-            result = await catalog.recommendations(); break
+          case 'modes': result = await catalog.listeningModes(); break
+          case 'feed': result = await catalog.recommendationBatch(params); break
           case 'lyrics': result = await catalog.lyrics(params.id); break
           case 'stream': {
             const { resolvePlayback } = await import('./playback.mjs')

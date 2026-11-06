@@ -41,7 +41,7 @@ for await (const line of readline.createInterface({input: process.stdin})) {
   const spec = JSON.parse(line);
   let frame;
   if (spec.op === 'start') frame = {ok: true, qr: 'https://bff-pc.qishui.com/test', expiresIn: 60000};
-  else if (spec.op === 'check') frame = {ok: true, status: 'confirmed', account, session: {version: 1, cookies: [{name: 'sessionid', value: 'test'}]}};
+  else if (spec.op === 'check') frame = {ok: true, status: 'confirmed', account, session: {version: 1, deviceID:'1234567890123456', installID:'123456789012345', cookies: [{name: 'sessionid', value: 'test'}]}};
   else if (spec.op === 'music') {
     const track = {id: '91', name: 'Fixture Song', duration: 180000, artists: [{id:'92',name:'Artist'}], album:{id:'93',name:'Album'}};
     const playlist = {id:'94',name:'Fixture Playlist',tracks:[track]};
@@ -50,6 +50,11 @@ for await (const line of readline.createInterface({input: process.stdin})) {
     else if (spec.method === 'playlists') result = [playlist];
     else if (spec.method === 'playlist') result = playlist;
     else if (spec.method === 'search') result = {tracks:[track],more:false};
+    else if (spec.method === 'modes') result = [{id:'preference:fresh',name:'Fresh',group:'Preferences'},{id:'scene:0',name:'Relax',group:'Mood'}];
+    else if (spec.method === 'feed') {
+      if (spec.params.count > 1 && (spec.params.played[0]?.id !== '91' || spec.params.played[0]?.duration !== 180000)) throw new Error('lost continuation feedback');
+      result = [{...track,id:String(90 + spec.params.count)}];
+    }
     else if (spec.method === 'lyrics') result = {lrc:'[00:01.00]Fixture'};
     else if (spec.method === 'stream') result = {url:'http://127.0.0.1:12345/fixture',type:'flac',quality:'high'};
     frame = {ok:true,result};
@@ -114,6 +119,30 @@ for await (const line of readline.createInterface({input: process.stdin})) {
 	found, err := p.Search("Fixture", music.SearchTracks, 0)
 	if err != nil || len(found.Tracks) != 1 || found.Tracks[0].Source != "qishui-app-login" {
 		t.Fatalf("search mapping failed: %v", err)
+	}
+	if !p.Can("stations") || !p.Can("stationNext") || !p.Can("browse") {
+		t.Fatal("continuous listening capabilities were not discovered")
+	}
+	modes, err := p.Stations()
+	if err != nil || len(modes) != 3 || modes[2].ID != "scene:0" {
+		t.Fatalf("station mapping failed: %v", err)
+	}
+	grouped, err := p.Browse("listening-modes")
+	if err != nil || len(grouped.Sections) != 2 || grouped.Sections[1].Stations[0].ID != "scene:0" {
+		t.Fatalf("grouped station browse failed: %v", err)
+	}
+	for _, n := range p.Info().Navigation {
+		if n.Page != "" {
+			if _, err := p.Browse(n.Page); err != nil {
+				t.Fatalf("manifest navigation did not reach a usable browse page: %v", err)
+			}
+		}
+	}
+	for i, id := range []string{"91", "92"} {
+		next, err := p.StationNext("scene:0")
+		if err != nil || len(next) != 1 || next[0].ID != id || next[0].Source != "qishui-app-login" {
+			t.Fatalf("station batch %d lost lifecycle or source: %v", i, err)
+		}
 	}
 	words, err := p.Lyrics("91")
 	if err != nil || words.LRC != "[00:01.00]Fixture" {

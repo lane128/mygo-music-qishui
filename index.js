@@ -7,10 +7,14 @@ let active = null;
 const retainedAudio = [];
 const musicHelpers = new Set();
 const searchCursors = new Map();
+const feedStates = new Map();
+const FEED_FIRST_USE_KEY = "feed-first-use";
+let browseSequence = 0;
 
 async function closeMusic() {
   retainedAudio.length = 0;
   searchCursors.clear();
+  feedStates.clear();
   const helpers = Array.from(musicHelpers);
   musicHelpers.clear();
   await Promise.all(helpers.map(helper => helper.close()));
@@ -149,7 +153,9 @@ export async function account() {
     // A failed network request does not discard credentials. An invalid session
     // is removed only if another login has not replaced it in the meantime.
     if (error.code === "signIn" && attempt === generation) {
+      ++generation;
       host.storage.remove(SESSION_KEY);
+      await closeMusic();
       return null;
     }
     throw error;
@@ -198,7 +204,79 @@ async function music(method, params = {}, persistent = false) {
 export async function home() { return (await music("home")).result; }
 export async function playlists() { return (await music("playlists")).result; }
 export async function playlist({ id }) { return (await music("playlist", { id })).result; }
-export async function browse({ page }) { return (await music("browse", { page })).result; }
+const recommendationStation = () => ({ id: "recommendations", name: "播放推荐", description: "按当前账号持续推荐歌曲" });
+const modeStation = mode => ({ id: mode.id, name: mode.name, description: mode.group, imageUrl: mode.imageUrl });
+
+async function nextFeed(id) {
+  if (typeof id !== "string" || !id || id.length > 512) throw fail("unsupported", t("不支持此听歌模式。"));
+  const saved = host.storage.get(SESSION_KEY);
+  if (!saved) throw fail("signIn", t("请先登录汽水音乐。"));
+  let state = feedStates.get(id);
+  if (!state) {
+    if (feedStates.size >= 64) {
+      for (const [key, previous] of feedStates) {
+        if (!previous.pending) { feedStates.delete(key); break; }
+      }
+      if (feedStates.size >= 64) throw new Error(t("汽水请求过于频繁，请稍后重试。"));
+    }
+    state = { count: 0, played: [], pending: null };
+    feedStates.set(id, state);
+  }
+  // Coalesce only the same station. Different modes never share a request queue
+  // or wait behind another mode's network deadline.
+  if (state.pending) return state.pending;
+  const params = { id, count: ++state.count, played: state.played };
+  if (id === "recommendations") {
+    let firstUse = host.storage.get(FEED_FIRST_USE_KEY);
+    if (!firstUse || firstUse.deviceID !== saved.deviceID || !Number.isSafeInteger(firstUse.time) || firstUse.time <= 0) {
+      firstUse = { deviceID: saved.deviceID, time: Math.floor(Date.now() / 1000) };
+      host.storage.set(FEED_FIRST_USE_KEY, firstUse);
+      params.firstDeviceRequest = true;
+    }
+    params.firstUseTime = firstUse.time;
+  }
+  const attempt = generation;
+  state.pending = (async () => {
+    const reply = await music("feed", params);
+    if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
+    const tracks = reply.result;
+    if (!Array.isArray(tracks)) throw new Error(t("汽水接口返回异常，请稍后重试。"));
+    const pending = new Map(state.played.map(track => [track.id, track]));
+    for (const track of tracks) {
+      pending.delete(track.id);
+      pending.set(track.id, { id: track.id, duration: Math.floor(track.duration || 0) });
+    }
+    state.played = Array.from(pending.values()).slice(-30);
+    return tracks;
+  })().finally(() => { state.pending = null; });
+  return state.pending;
+}
+
+export async function stations() {
+  const modes = (await music("modes")).result;
+  return [recommendationStation(), ...modes.map(modeStation)];
+}
+export async function stationNext({ id }) { return nextFeed(id); }
+export async function browse({ page }) {
+  if (page === "listening-modes") {
+    const modes = (await music("modes")).result;
+    const groups = new Map();
+    for (const mode of modes) {
+      const group = groups.get(mode.group) || [];
+      group.push(modeStation(mode));
+      groups.set(mode.group, group);
+    }
+    return { title: "听歌模式", subtitle: "按心情和场景听歌，点击模式开始持续播放", sections: Array.from(groups, ([title, stations]) => ({ title, stations })) };
+  }
+  if (typeof page === "string" && /^recommendations(?::\d{1,15})?$/.test(page)) {
+    const tracks = await nextFeed("recommendations");
+    return { title: "推荐", sections: [
+      { stations: [recommendationStation()] },
+      { tracks, links: [{ title: "换一批", page: `recommendations:${++browseSequence}` }] },
+    ] };
+  }
+  throw fail("unsupported", t("不支持此汽水页面。"));
+}
 export async function lyrics({ id }) { return (await music("lyrics", { id })).result; }
 export async function search({ query, kind = "tracks", offset = 0 }) {
   const attempt = generation;

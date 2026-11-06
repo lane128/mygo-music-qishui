@@ -1,6 +1,7 @@
 // Ported from mygo-cloudmusic/internal/qishui/{catalog,client,feed,pc}.go.
 import { createHash, randomUUID } from 'node:crypto'
 import { API, cookieHeader, decodeResponse, error } from './protocol.mjs'
+import { feedBody, modesOf } from './discovery.mjs'
 
 const PAGE_SIZE = 20
 const idOf = value => {
@@ -224,19 +225,27 @@ export class Catalog {
     throw error('response')
   }
   async home() {
-    return { title: '汽水音乐', sections: [{ title: '我的歌单', playlists: await this.playlists() }, { title: '发现音乐', links: [{ title: '推荐歌曲', page: 'recommendations' }] }] }
+    return { title: '汽水音乐', sections: [
+      { title: '我的歌单', playlists: await this.playlists() },
+      { title: '发现音乐', links: [{ title: '推荐', page: 'recommendations' }, { title: '听歌模式', page: 'listening-modes' }] },
+      { title: '持续听歌', stations: [{ id: 'recommendations', name: '播放推荐', description: '按当前账号持续推荐歌曲' }] },
+    ] }
   }
-  async recommendations() {
-    const result = await this.request('/luna/pc/feed/song-tab', { query: pcCatalogParams(this.session), signed: true,
-      body: { played_media: [], is_first_request: true, is_did_first_request: false, feed_counts: { mix_session_count: 1 } } })
-    if (!Array.isArray(result.items)) throw error('response')
+  async listeningModes() {
+    const result = await this.request('/luna/pc/feed/mode', { signed: true, body: {} })
+    return modesOf(result, raw => image(raw, '~c5_300x300.jpg'))
+  }
+  async recommendationBatch(params = {}) {
+    const result = await this.request('/luna/pc/feed/song-tab', { signed: true, body: feedBody(params) })
+    if (!Array.isArray(result?.items)) throw error('response')
     const tracks = new Map()
     for (const item of result.items) {
+      if (!item || typeof item !== 'object') throw error('response')
       if (item.type !== 'track') continue
       const track = trackOf(item.entity?.track_wrapper?.track)
       tracks.set(track.id, track)
     }
-    return { title: '推荐歌曲', sections: [{ tracks: [...tracks.values()] }] }
+    return [...tracks.values()]
   }
   async lyrics(id) {
     idOf(id)

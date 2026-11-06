@@ -190,3 +190,114 @@ test('a stale account check cannot discard newly signed-in credentials', async (
   assert.equal(await checking, null)
   assert.equal(s.state.get('session').account.id, profile.id)
 })
+
+// Recommendation continuation consumes counters on failed attempts and keeps feedback isolated per station.
+test('continues recommendation and mode batches with independent lifecycle and bounded pending tracks', async () => {
+  const tracks = Array.from({ length: 35 }, (_, i) => ({ id: String(i), duration: 181234 }))
+  const s = await sandbox([
+    [{ ok: true, result: tracks }], [{ ok: false, error: 'network' }], [{ ok: true, result: [{ id: '35', duration: 200000 }] }],
+    [{ ok: true, result: [{ id: 'mode', duration: 1000 }] }], [{ ok: true, result: [] }],
+  ], session)
+  await s.api.stationNext({ id: 'recommendations' })
+  await assert.rejects(s.api.stationNext({ id: 'recommendations' }))
+  await s.api.stationNext({ id: 'recommendations' })
+  await s.api.stationNext({ id: 'scene:0' })
+  await s.api.stationNext({ id: 'preference:fresh' })
+  assert.equal(s.calls[0].params.count, 1)
+  assert.equal(s.calls[0].params.firstDeviceRequest, true)
+  assert.ok(s.calls[0].params.firstUseTime > 0)
+  assert.equal(s.calls[1].params.count, 2)
+  assert.equal(s.calls[1].params.played.length, 30)
+  assert.equal(s.calls[1].params.played[0].id, '5')
+  assert.equal(s.calls[1].params.played[0].duration, 181234)
+  assert.equal(s.calls[1].params.firstDeviceRequest, undefined)
+  assert.equal(s.calls[2].params.count, 3)
+  assert.deepEqual(s.calls[2].params.played, s.calls[1].params.played)
+  for (const call of s.calls.slice(3)) {
+    assert.equal(call.params.count, 1)
+    assert.deepEqual(call.params.played, [])
+    assert.equal(call.params.firstUseTime, undefined)
+  }
+  await s.api.signOut()
+  assert.equal(s.closed(), 5)
+})
+
+// Same-station prefetch is coalesced while a different mode can resolve independently.
+test('coalesces only concurrent requests for the same station', async () => {
+  let finish
+  const pending = new Promise(resolve => { finish = resolve })
+  const frame = { ok: true, result: [{ id: '1', duration: 1000 }] }
+  const s = await sandbox([[() => pending], [frame], [frame]], session)
+  const first = s.api.stationNext({ id: 'recommendations' })
+  const same = s.api.stationNext({ id: 'recommendations' })
+  const mode = s.api.stationNext({ id: 'preference:fresh' })
+  assert.equal((await mode)[0].id, '1')
+  assert.equal(s.calls.length, 2)
+  finish(JSON.stringify(frame))
+  assert.equal((await first)[0].id, '1')
+  assert.equal((await same)[0].id, '1')
+  await s.api.stationNext({ id: 'recommendations' })
+  assert.equal(s.calls[2].params.count, 2)
+  await s.api.signOut()
+})
+
+// Following the plugin's continuation link loads another batch instead of relying on unsupported browse offsets.
+test('recommendation pages expose continuation and modes map to playable station IDs', async () => {
+  const modes = [{ id: 'preference:fresh', name: 'Fresh', group: 'A' }, { id: 'scene:0', name: 'Zero', group: 'B', imageUrl: 'https://example.invalid/cover' }]
+  const s = await sandbox([
+    [{ ok: true, result: [{ id: '1', duration: 1000 }] }], [{ ok: true, result: [{ id: '2', duration: 1000 }] }],
+    [{ ok: true, result: modes }], [{ ok: true, result: modes }],
+  ], session)
+  const first = await s.api.browse({ page: 'recommendations' })
+  const next = await s.api.browse({ page: first.sections[1].links[0].page })
+  assert.equal(first.sections[1].tracks[0].id, '1')
+  assert.equal(next.sections[1].tracks[0].id, '2')
+  assert.notEqual(first.sections[1].links[0].page, next.sections[1].links[0].page)
+  assert.equal(first.sections[0].stations[0].id, 'recommendations')
+  const page = await s.api.browse({ page: 'listening-modes' })
+  assert.equal(page.sections[1].stations[0].id, 'scene:0')
+  const stations = await s.api.stations()
+  assert.equal(stations[0].id, 'recommendations')
+  assert.equal(stations[2].id, 'scene:0')
+  assert.equal(stations[2].imageUrl, modes[1].imageUrl)
+  await assert.rejects(s.api.browse({ page: 'unsupported' }), error => error.code === 'unsupported')
+  await s.api.signOut()
+})
+
+// Account replacement must discard pending old-account feeds and reset mode counters/history.
+test('replacement login invalidates pending feeds and resets continuation for the new device', async () => {
+  let finish, confirm
+  const pending = new Promise(resolve => { finish = resolve })
+  const confirmation = new Promise(resolve => { confirm = resolve })
+  const newSession = { ...session, deviceID: '2345678901234567' }
+  const s = await sandbox([
+    [started, () => confirmation], [() => pending], [{ ok: true, result: [] }],
+  ], session)
+  const signing = s.api.signIn()
+  while (s.calls.length < 2) await new Promise(resolve => setImmediate(resolve))
+  const old = s.api.stationNext({ id: 'recommendations' })
+  while (s.calls.length < 3) await new Promise(resolve => setImmediate(resolve))
+  confirm(JSON.stringify({ ...confirmed, session: newSession }))
+  await signing
+  finish(JSON.stringify({ ok: true, result: [{ id: 'old', duration: 1000 }] }))
+  await assert.rejects(old, error => error.code === 'signIn')
+  await s.api.stationNext({ id: 'recommendations' })
+  const latest = s.calls.at(-1)
+  assert.equal(latest.session.deviceID, newSession.deviceID)
+  assert.equal(latest.params.count, 1)
+  assert.equal(latest.params.firstDeviceRequest, true)
+  assert.deepEqual(latest.params.played, [])
+  await s.api.signOut()
+})
+
+// Server-side account expiry must cancel a concurrent feed rather than accepting its stale result.
+test('invalid account restoration invalidates pending station results', async () => {
+  let finish
+  const pending = new Promise(resolve => { finish = resolve })
+  const s = await sandbox([[() => pending], [{ ok: false, error: 'session' }]], session)
+  const next = s.api.stationNext({ id: 'scene:0' })
+  assert.equal(await s.api.account(), null)
+  finish(JSON.stringify({ ok: true, result: [{ id: 'old', duration: 1000 }] }))
+  await assert.rejects(next, error => error.code === 'signIn')
+  await assert.rejects(s.api.stationNext({ id: 'scene:0' }), error => error.code === 'signIn')
+})
