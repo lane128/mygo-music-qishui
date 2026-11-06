@@ -90,10 +90,38 @@ test('fetches public lyrics without account credentials and strips per-word timi
     assert.equal(new URL(url).hostname, 'beta-luna.douyin.com')
     assert.equal(Object.keys(opts.headers).some(k => /cookie|helios|medusa/i.test(k)), false)
     assert.equal(opts.redirect, 'error')
-    return wire({ seo_track: { lyric: { content: '[61234,900]<0,10,0>你<10,30,0>好\n[01:04.20]世界' } } })
+    return wire({ seo_track: { track: { id: '123' } }, lyric: { content: '[61234,900]<0,10,0>你<10,30,0>好\n[01:04.20]世界' } })
   } })
   assert.deepEqual(await catalog.lyrics('123'), { lrc: '[01:01.23]你好\n[01:04.20]世界' })
   assert.equal(normalizeLyrics('unrecognized'), '')
+})
+
+// Real top-level lyrics must survive SEO metadata, while legacy nested lyrics and instrumentals remain supported.
+test('reads top-level lyrics beside SEO metadata and retains legitimate no-lyric tracks', async () => {
+  for (const [response, expected] of [
+    [{ seo_track: { track: { id: '123' } }, lyric: { content: '[1000,100]正文' } }, '[00:01.00]正文'],
+    [{ seo_track: { track: { id: '123' }, lyric: { content: '[2000,100]旧版' } } }, '[00:02.00]旧版'],
+    [{ seo_track: { track: { id: '123' }, lyric: { content: '[2000,100]旧版' } }, lyric: { content: '' } }, ''],
+    [{ seo_track: { track: { id: '123' } } }, ''],
+    [{ track_info: { id: '123' }, lyric: null }, ''],
+  ]) {
+    const catalog = new Catalog(session, { publicFetch: async () => wire(response) })
+    assert.equal((await catalog.lyrics('123')).lrc, expected)
+  }
+})
+
+// Wrong-song metadata and malformed lyric payloads must fail rather than showing another song or silently hiding an error.
+test('rejects mismatched lyric identity and malformed public lyric responses', async () => {
+  for (const response of [
+    { seo_track: { track: { id: '456' } }, lyric: { content: '[1000,100]错误歌曲' } },
+    { seo_track: { track: { id: '123' } }, lyric: { content: 42 } },
+    { seo_track: { track: { id: '123' } }, lyric: 'wrong-type' },
+    { seo_track: { track: { id: '123' } }, lyric: [] },
+    {},
+  ]) {
+    const catalog = new Catalog(session, { publicFetch: async () => wire(response) })
+    await assert.rejects(catalog.lyrics('123'), { kind: 'response' })
+  }
 })
 
 // The home must expose real account playlists even when recommendation signing is unavailable.

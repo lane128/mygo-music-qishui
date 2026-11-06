@@ -44,7 +44,7 @@ await mkdir(path.join(root, 'dist'), { recursive: true })
 const stage = await mkdtemp(path.join(root, 'dist', '.package-'))
 const archive = path.join(root, 'dist', `plugin-${platform}-${arch}-${manifest.version}-${Date.now()}.zip`)
 try {
-  for (const name of ['plugin.json', 'index.js', 'package.json', 'package-lock.json', 'README.md', 'NOTICE.md', 'VALIDATION.md', 'LICENSE', 'helper', 'scripts', 'test']) {
+  for (const name of ['plugin.json', 'index.js', 'package.json', 'package-lock.json', 'README.md', 'NOTICE.md', 'VALIDATION.md', 'LICENSE', 'assets', 'helper', 'scripts', 'test']) {
     await cp(path.join(root, name), path.join(stage, name), { recursive: true })
   }
   await mkdir(path.join(stage, 'bin'), { recursive: true })

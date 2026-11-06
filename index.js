@@ -258,15 +258,8 @@ export async function stations() {
 }
 export async function stationNext({ id }) { return nextFeed(id); }
 export async function browse({ page }) {
-  if (page === "listening-modes") {
-    const modes = (await music("modes")).result;
-    const groups = new Map();
-    for (const mode of modes) {
-      const group = groups.get(mode.group) || [];
-      group.push(modeStation(mode));
-      groups.set(mode.group, group);
-    }
-    return { title: "听歌模式", subtitle: "按心情和场景听歌，点击模式开始持续播放", sections: Array.from(groups, ([title, stations]) => ({ title, stations })) };
+  if (typeof page === "string" && /^listening-modes(?::(?:focus|mood|activity|styles|voices|other):[1-9]\d{0,5})?$/.test(page)) {
+    return (await music("modePage", { page })).result;
   }
   if (typeof page === "string" && /^recommendations(?::\d{1,15})?$/.test(page)) {
     const tracks = await nextFeed("recommendations");

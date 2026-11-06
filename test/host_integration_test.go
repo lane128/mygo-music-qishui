@@ -3,6 +3,7 @@
 package plugin
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -51,6 +52,9 @@ for await (const line of readline.createInterface({input: process.stdin})) {
     else if (spec.method === 'playlist') result = playlist;
     else if (spec.method === 'search') result = {tracks:[track],more:false};
     else if (spec.method === 'modes') result = [{id:'preference:fresh',name:'Fresh',group:'Preferences'},{id:'scene:0',name:'Relax',group:'Mood'}];
+    else if (spec.method === 'modePage') result = spec.params.page === 'listening-modes'
+      ? {sections:[{stations:[{id:'preference:fresh',name:'Fresh'}]},{links:[{title:'Scenes',page:'listening-modes:other:1'}]}]}
+      : {sections:[{stations:[{id:'scene:0',name:'Relax'}]}]};
     else if (spec.method === 'feed') {
       if (spec.params.count > 1 && (spec.params.played[0]?.id !== '91' || spec.params.played[0]?.duration !== 180000)) throw new Error('lost continuation feedback');
       result = [{...track,id:String(90 + spec.params.count)}];
@@ -128,8 +132,12 @@ for await (const line of readline.createInterface({input: process.stdin})) {
 		t.Fatalf("station mapping failed: %v", err)
 	}
 	grouped, err := p.Browse("listening-modes")
-	if err != nil || len(grouped.Sections) != 2 || grouped.Sections[1].Stations[0].ID != "scene:0" {
-		t.Fatalf("grouped station browse failed: %v", err)
+	if err != nil || len(grouped.Sections) != 2 || len(grouped.Sections[1].Links) != 1 {
+		t.Fatalf("scene category landing failed: %v", err)
+	}
+	category, err := p.Browse(grouped.Sections[1].Links[0].Page)
+	if err != nil || len(category.Sections) != 1 || category.Sections[0].Stations[0].ID != "scene:0" {
+		t.Fatalf("scene category navigation lost its playable station: %v", err)
 	}
 	for _, n := range p.Info().Navigation {
 		if n.Page != "" {
@@ -214,6 +222,25 @@ func TestQishuiPluginZipInstall(t *testing.T) {
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("installed runtime failed: %v, %s", err, out)
+	}
+	manifest, err := os.ReadFile(filepath.Join(installed, "assets", "scene-covers", "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var art struct {
+		Covers map[string]string `json:"covers"`
+	}
+	if err := json.Unmarshal(manifest, &art); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"preference:familiar", "category:other"} {
+		if art.Covers[id] == "" {
+			t.Fatal("missing installed scene artwork")
+		}
+		image, err := music.Fetch(music.FileURL(filepath.Join(installed, "assets", "scene-covers", art.Covers[id])))
+		if err != nil || len(image) < 8 || string(image[1:4]) != "PNG" {
+			t.Fatalf("MyGO could not fetch the installed scene cover: %v", err)
+		}
 	}
 	p, err := Load(installed, t.TempDir())
 	if err != nil {

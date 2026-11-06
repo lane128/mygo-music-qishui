@@ -13,7 +13,7 @@ globalThis.fetch = async (url, options) => {
   assert.equal(options.redirect, 'error')
   if (parsed.hostname === 'beta-luna.douyin.com') {
     assert.equal(options.headers.Cookie, undefined)
-    return json({ seo_track: { track, lyric: { content: '[1000,2000]<0,1000,0>歌词' } } })
+    return json({ seo_track: { track }, lyric: { content: '[1000,2000]<0,1000,0>歌词' } })
   }
   assert.equal(parsed.hostname, 'api.qishui.com')
   assert.equal(options.headers.Cookie, ['sessionid', 'fixture-session'].join('='))

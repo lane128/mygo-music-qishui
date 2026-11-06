@@ -3,6 +3,7 @@ import readline from 'node:readline'
 import { Login, error, restoreAccount } from './protocol.mjs'
 import { createBrowser } from './browser.mjs'
 import { Catalog } from './catalog.mjs'
+import { scenePage } from './scene-pages.mjs'
 import { audioServer } from './audio-server.mjs'
 
 const send = frame => process.stdout.write(JSON.stringify(frame) + '\n')
@@ -75,6 +76,7 @@ try {
             continue
           }
           case 'modes': result = await catalog.listeningModes(); break
+          case 'modePage': result = scenePage(await catalog.listeningModes(), params.page); break
           case 'feed': result = await catalog.recommendationBatch(params); break
           case 'lyrics': result = await catalog.lyrics(params.id); break
           case 'stream': {

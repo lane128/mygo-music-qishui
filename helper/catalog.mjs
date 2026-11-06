@@ -2,6 +2,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { API, cookieHeader, decodeResponse, error } from './protocol.mjs'
 import { feedBody, modesOf } from './discovery.mjs'
+import { sceneCover } from './scene-art.mjs'
 
 const PAGE_SIZE = 20
 const idOf = value => {
@@ -88,7 +89,7 @@ async function fetchJSON(url, options, request = fetch) {
   return decodeResponse({ status: response.status, body })
 }
 
-function image(raw, suffix = '~c5_375x375.jpg') {
+export function image(raw, suffix = '~c5_375x375.jpg') {
   if (typeof raw === 'string') {
     try { return new URL(raw).protocol === 'https:' ? raw : undefined } catch { return undefined }
   }
@@ -233,7 +234,7 @@ export class Catalog {
   }
   async listeningModes() {
     const result = await this.request('/luna/pc/feed/mode', { signed: true, body: {} })
-    return modesOf(result, raw => image(raw, '~c5_300x300.jpg'))
+    return modesOf(result, raw => image(raw, '~c5_300x300.jpg')).map(mode => ({ ...mode, imageUrl: sceneCover(mode) }))
   }
   async recommendationBatch(params = {}) {
     const result = await this.request('/luna/pc/feed/song-tab', { signed: true, body: feedBody(params) })
@@ -254,9 +255,16 @@ export class Catalog {
     const result = await fetchJSON('https://beta-luna.douyin.com/luna/h5/seo_track?' + query, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36' }, signal: this.signal,
     }, this.publicFetch)
-    const raw = result.seo_track || result
-    if (typeof raw.lyric?.content === 'string') return { lrc: normalizeLyrics(raw.lyric.content) }
-    if (!(raw.track?.id || raw.track_info?.id)) throw error('response')
+    // The live SEO response puts lyric beside seo_track, not inside it.
+    // Retain the legacy nested form without letting metadata hide the lyric.
+    const track = result.seo_track?.track || result.track || result.track_info
+    if (track?.id != null && idOf(track.id) !== id) throw error('response')
+    const lyric = result.lyric ?? result.seo_track?.lyric
+    if (lyric != null) {
+      if (typeof lyric !== 'object' || Array.isArray(lyric) || (lyric.content != null && typeof lyric.content !== 'string')) throw error('response')
+      if (typeof lyric.content === 'string') return { lrc: normalizeLyrics(lyric.content) }
+    }
+    if (!track?.id) throw error('response')
     return { lrc: '' }
   }
 }

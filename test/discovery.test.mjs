@@ -21,7 +21,7 @@ test('loads signed grouped modes without conflating scene zero and absent IDs', 
   const modes = await catalog.listeningModes()
   assert.deepEqual(modes.map(mode => mode.id), ['preference:familiar', 'preference:fresh', 'scene:0', 'scene:42', 'preference:custom%3Afocus'])
   assert.equal(modes.find(mode => mode.id === 'scene:0').group, '心情')
-  assert.match(modes[2].imageUrl, /^https:\/\/p3-luna\.douyinpic\.com\/img\/scene-cover/)
+  assert.equal(new URL(modes[2].imageUrl).protocol, 'file:')
   assert.deepEqual(feedPreference(modes[4].id), { preference_mode: 'custom:focus' })
 })
 

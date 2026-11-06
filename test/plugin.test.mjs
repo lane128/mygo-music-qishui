@@ -244,9 +244,11 @@ test('coalesces only concurrent requests for the same station', async () => {
 // Following the plugin's continuation link loads another batch instead of relying on unsupported browse offsets.
 test('recommendation pages expose continuation and modes map to playable station IDs', async () => {
   const modes = [{ id: 'preference:fresh', name: 'Fresh', group: 'A' }, { id: 'scene:0', name: 'Zero', group: 'B', imageUrl: 'https://example.invalid/cover' }]
+  const modePage = { sections: [{ stations: [modes[0]] }, { links: [{ page: 'listening-modes:other:1' }] }] }
+  const categoryPage = { sections: [{ stations: [modes[1]] }] }
   const s = await sandbox([
     [{ ok: true, result: [{ id: '1', duration: 1000 }] }], [{ ok: true, result: [{ id: '2', duration: 1000 }] }],
-    [{ ok: true, result: modes }], [{ ok: true, result: modes }],
+    [{ ok: true, result: modePage }], [{ ok: true, result: categoryPage }], [{ ok: true, result: modes }],
   ], session)
   const first = await s.api.browse({ page: 'recommendations' })
   const next = await s.api.browse({ page: first.sections[1].links[0].page })
@@ -255,7 +257,10 @@ test('recommendation pages expose continuation and modes map to playable station
   assert.notEqual(first.sections[1].links[0].page, next.sections[1].links[0].page)
   assert.equal(first.sections[0].stations[0].id, 'recommendations')
   const page = await s.api.browse({ page: 'listening-modes' })
-  assert.equal(page.sections[1].stations[0].id, 'scene:0')
+  const category = await s.api.browse({ page: page.sections[1].links[0].page })
+  assert.equal(category.sections[0].stations[0].id, 'scene:0')
+  assert.equal(s.calls[2].method, 'modePage')
+  assert.equal(s.calls[3].params.page, 'listening-modes:other:1')
   const stations = await s.api.stations()
   assert.equal(stations[0].id, 'recommendations')
   assert.equal(stations[2].id, 'scene:0')
