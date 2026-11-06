@@ -19,6 +19,19 @@ for (const [name, expected] of Object.entries(securityFiles)) {
   const digest = createHash('sha256').update(await readFile(path.join(assets, name))).digest('hex')
   if (digest !== expected) throw new Error(`Unexpected build SDK checksum: ${name}`)
 }
+// Playback uses the matching official macOS arm64 3.7.0 native pair. Build-time
+// paths are never exposed as plugin settings or written into the release.
+if (process.platform !== 'darwin' || process.arch !== 'arm64') throw new Error('Music playback packages currently support macOS arm64 only.')
+const nativeAssets = process.env.QISHUI_NATIVE_DIR
+if (!nativeAssets || !path.isAbsolute(nativeAssets)) throw new Error('Build requires QISHUI_NATIVE_DIR with the verified official 3.7.0 native pair.')
+const nativeFiles = {
+  'bdms.node': 'bb8858680af4360d4da706caccfbbc73cfdf3f8cafebcb4f521ca7b782cb4bb2',
+  'libMetaSecML.dylib': '078db186b335c8400f5b8bb48762ef8ac36ff055f60576775a4334587bba760c',
+}
+for (const [name, expected] of Object.entries(nativeFiles)) {
+  const digest = createHash('sha256').update(await readFile(path.join(nativeAssets, name))).digest('hex')
+  if (digest !== expected) throw new Error(`Unexpected native runtime checksum: ${name}`)
+}
 const nodeLicense = path.resolve(path.dirname(process.execPath), process.platform === 'win32' ? 'LICENSE' : '../LICENSE')
 await readFile(nodeLicense) // Refuse a runtime distribution without its license.
 const playwright = path.dirname(require.resolve('playwright-core/package.json'))
@@ -41,6 +54,12 @@ try {
   await cp(playwright, path.join(stage, 'node_modules', 'playwright-core'), { recursive: true })
   await mkdir(path.join(stage, 'runtime', 'security'), { recursive: true })
   for (const name of Object.keys(securityFiles)) await cp(path.join(assets, name), path.join(stage, 'runtime', 'security', name))
+  await mkdir(path.join(stage, 'runtime', 'native'), { recursive: true })
+  for (const name of Object.keys(nativeFiles)) await cp(path.join(nativeAssets, name), path.join(stage, 'runtime', 'native', name))
+  const converter = path.join(stage, 'runtime', 'native', 'audio-convert')
+  const compile = spawnSync('/usr/bin/clang', ['-O2', '-framework', 'AudioToolbox', '-framework', 'CoreFoundation', path.join(root, 'helper', 'audio-convert.c'), '-o', converter], { stdio: 'inherit' })
+  if (compile.error || compile.status !== 0) throw new Error('Audio converter build failed; install Xcode Command Line Tools on the build machine.')
+  await chmod(converter, 0o755)
   const result = spawnSync('zip', ['-q', '-r', archive, '.'], { cwd: stage, stdio: 'inherit' })
   if (result.error || result.status !== 0) throw new Error('ZIP packaging failed; install the zip command.')
   console.log(archive)

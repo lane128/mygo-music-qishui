@@ -94,6 +94,91 @@ test('restores an account and clears only an invalid session', async () => {
   assert.equal(s.spawned(), 3)
 })
 
+// Content exports must pass the saved session and present the helper's MyGO-shaped results.
+test('loads music after login without settings and keeps stream URLs alive until sign-out', async () => {
+  const home = { title: '汽水音乐', sections: [{ playlists: [{ id: '123', name: '歌单' }] }] }
+  const audio = { url: 'http://127.0.0.1:12345/private', type: 'flac', quality: 'high' }
+  const s = await sandbox([[{ ok: true, result: home }], [{ ok: true, result: audio }]], session)
+  assert.equal((await s.api.home()).sections[0].playlists[0].id, '123')
+  assert.equal(s.calls[0].method, 'home')
+  assert.equal(s.calls[0].session.deviceID, session.deviceID)
+  assert.equal(s.closed(), 1)
+  assert.equal((await s.api.stream({ id: '123', quality: 'high' })).url, audio.url)
+  assert.equal(s.closed(), 1)
+  await s.api.signOut()
+  assert.equal(s.closed(), 2)
+  await assert.rejects(s.api.home(), error => error.code === 'signIn')
+})
+
+// Background prefetch must not make a new stream wait behind another song's 25-second budget.
+test('resolves concurrent streams independently and bounds retained audio helpers', async () => {
+  let first, second;
+  const waitingFirst = new Promise(resolve => { first = resolve });
+  const waitingSecond = new Promise(resolve => { second = resolve });
+  const frame = { ok: true, result: { url: 'http://127.0.0.1:12345/fixture', type: 'mp3', quality: 'high' } };
+  const s = await sandbox([[() => waitingFirst], [() => waitingSecond], [frame], [frame], [frame]], session);
+  const a = s.api.stream({ id: '1' });
+  const b = s.api.stream({ id: '2' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(s.calls.length, 2, 'both stream requests must start before either reply');
+  second(JSON.stringify(frame));
+  assert.equal((await b).type, 'mp3');
+  first(JSON.stringify(frame));
+  await a;
+  for (const id of ['3', '4', '5']) await s.api.stream({ id });
+  assert.equal(s.closed(), 1, 'only the oldest completed helper is evicted');
+  await s.api.signOut();
+  assert.equal(s.closed(), 5);
+})
+
+// The next MyGO search offset must reuse the opaque server cursor within the same account.
+test('forwards search cursors and maps entitlement and unsupported errors', async () => {
+  const s = await sandbox([
+    [{ ok: true, result: { tracks: [{ id: '1' }], more: true }, cursor: 'opaque', nextOffset: 1 }],
+    [{ ok: true, result: { tracks: [{ id: '2' }], more: false } }],
+    [{ ok: false, error: 'unsupported' }],
+    [{ ok: false, error: 'preview' }],
+  ], session)
+  await s.api.search({ query: '音乐' })
+  const page = await s.api.search({ query: '音乐', offset: 1 })
+  assert.equal(s.calls[1].params.cursor, 'opaque')
+  assert.equal(page.tracks[0].id, '2')
+  await assert.rejects(s.api.search({ query: '音乐', kind: 'albums' }), error => error.code === 'unsupported')
+  await assert.rejects(s.api.stream({ id: '3' }), error => error.code === 'unavailable')
+  await s.api.signOut()
+})
+
+// A stream started with the old account while a replacement QR is pending must be canceled on commit.
+test('replacement login invalidates music started during QR confirmation', async () => {
+  let confirm, finishAudio;
+  const confirmation = new Promise(resolve => { confirm = resolve });
+  const audio = new Promise(resolve => { finishAudio = resolve });
+  const s = await sandbox([[started, () => confirmation], [() => audio]], { ...session, account: { id: '1', name: 'Account A' } });
+  const signing = s.api.signIn();
+  while (s.calls.length < 2) await new Promise(resolve => setImmediate(resolve));
+  const playing = s.api.stream({ id: '123' });
+  while (s.calls.length < 3) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(s.calls[2].session.account.id, '1');
+  confirm(JSON.stringify(confirmed));
+  await signing;
+  assert.equal(s.state.get('session').account.id, profile.id);
+  finishAudio(JSON.stringify({ ok: true, result: { url: 'http://127.0.0.1/old-account', type: 'mp3' } }));
+  await assert.rejects(playing, error => error.code === 'signIn');
+  assert.equal(s.closed(), 2);
+})
+
+// A response from an account that signed out must never reach the new content page.
+test('discards in-flight catalog results after sign-out', async () => {
+  let finish
+  const pending = new Promise(resolve => { finish = resolve })
+  const s = await sandbox([[() => pending]], session)
+  const loading = s.api.playlist({ id: '123' })
+  while (!s.calls.length) await new Promise(resolve => setImmediate(resolve))
+  await s.api.signOut()
+  finish(JSON.stringify({ ok: true, result: { id: '123', tracks: [] } }))
+  await assert.rejects(loading, error => error.code === 'signIn')
+})
+
 // A late invalid-session reply must not erase a new successful login.
 test('a stale account check cannot discard newly signed-in credentials', async () => {
   let finish

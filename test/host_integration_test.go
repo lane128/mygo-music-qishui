@@ -42,6 +42,18 @@ for await (const line of readline.createInterface({input: process.stdin})) {
   let frame;
   if (spec.op === 'start') frame = {ok: true, qr: 'https://bff-pc.qishui.com/test', expiresIn: 60000};
   else if (spec.op === 'check') frame = {ok: true, status: 'confirmed', account, session: {version: 1, cookies: [{name: 'sessionid', value: 'test'}]}};
+  else if (spec.op === 'music') {
+    const track = {id: '91', name: 'Fixture Song', duration: 180000, artists: [{id:'92',name:'Artist'}], album:{id:'93',name:'Album'}};
+    const playlist = {id:'94',name:'Fixture Playlist',tracks:[track]};
+    let result;
+    if (spec.method === 'home') result = {title:'Home',sections:[{playlists:[playlist]}]};
+    else if (spec.method === 'playlists') result = [playlist];
+    else if (spec.method === 'playlist') result = playlist;
+    else if (spec.method === 'search') result = {tracks:[track],more:false};
+    else if (spec.method === 'lyrics') result = {lrc:'[00:01.00]Fixture'};
+    else if (spec.method === 'stream') result = {url:'http://127.0.0.1:12345/fixture',type:'flac',quality:'high'};
+    frame = {ok:true,result};
+  }
   else frame = {ok: true, account: spec.session.account};
   process.stdout.write(JSON.stringify(frame) + '\n');
 }`
@@ -83,6 +95,33 @@ for await (const line of readline.createInterface({input: process.stdin})) {
 	}
 	if prompt.QR != "https://bff-pc.qishui.com/test" {
 		t.Fatal("original QR did not reach the host")
+	}
+	if p.Info().Playback != music.PlaybackStream || !p.Can("home") || !p.Can("playlist") || !p.Can("stream") {
+		t.Fatal("music capabilities were not discovered")
+	}
+	home, err := p.Home()
+	if err != nil || len(home.Sections) == 0 || len(home.Sections[0].Playlists) != 1 || home.Sections[0].Playlists[0].Tracks[0].Source != "qishui-app-login" {
+		t.Fatalf("home mapping failed: %v", err)
+	}
+	lists, err := p.Playlists()
+	if err != nil || len(lists) != 1 || lists[0].ID != "94" {
+		t.Fatalf("playlist list mapping failed: %v", err)
+	}
+	pl, err := p.Playlist("94")
+	if err != nil || len(pl.Tracks) != 1 || pl.Tracks[0].Duration != 180000 {
+		t.Fatalf("playlist tracks mapping failed: %v", err)
+	}
+	found, err := p.Search("Fixture", music.SearchTracks, 0)
+	if err != nil || len(found.Tracks) != 1 || found.Tracks[0].Source != "qishui-app-login" {
+		t.Fatalf("search mapping failed: %v", err)
+	}
+	words, err := p.Lyrics("91")
+	if err != nil || words.LRC != "[00:01.00]Fixture" {
+		t.Fatalf("lyrics mapping failed: %v", err)
+	}
+	stream, err := p.Stream("91", "high")
+	if err != nil || stream.Type != "flac" || stream.Quality != "high" {
+		t.Fatalf("stream mapping failed: %v", err)
 	}
 	p.Close()
 	again, err := Load(dir, data)
@@ -141,7 +180,7 @@ func TestQishuiPluginZipInstall(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		executable += ".exe"
 	}
-	cmd := exec.Command(filepath.Join(installed, "bin", executable), "-e", `require('playwright-core'); require('fs').readFileSync('runtime/security/bdms.js'); require('fs').readFileSync('runtime/security/sdk-glue.js')`)
+	cmd := exec.Command(filepath.Join(installed, "bin", executable), "-e", `require('playwright-core'); require('fs').readFileSync('runtime/security/bdms.js'); require('fs').readFileSync('runtime/security/sdk-glue.js'); import('./helper/native.mjs').then(async ({signRequest}) => { const headers = await signRequest({url:'https://api.qishui.com/luna/pc/track_v2?aid=386088&app_name=luna_pc&fp=1234567890123456',headers:{accept:'application/json'},did:'1234567890123456'}); if (!headers['x-helios'] || !headers['x-medusa']) throw new Error('missing signature'); }).catch(()=>process.exitCode=1)`)
 	cmd.Dir = installed
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	if out, err := cmd.CombinedOutput(); err != nil {
