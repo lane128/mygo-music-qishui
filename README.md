@@ -11,7 +11,7 @@
 | 系统 | Release 安装包 | 验证情况 |
 | --- | --- | --- |
 | macOS Apple Silicon | `plugin-darwin-arm64.zip` | 已完成 macOS 本机原生组件、音频夹具及宿主自动化验证 |
-| Windows 10/11 x64 | `plugin-windows-amd64.zip` | 实验性支持；已交叉构建、静态检查和验证宿主安装，尚未完成 Windows 实机执行验收 |
+| Windows 10/11 x64 | `plugin-windows-amd64.zip` | 实验性支持；已交叉构建、静态检查和验证宿主安装 |
 
 [一键安装](mygo-music://install-plugin?repo=lane128/mygo-music-qishui)，或在 MyGO「设置 → 插件 → +」中输入仓库地址：
 
