@@ -15,20 +15,20 @@ export function accountURL(raw) {
 
 // Tokenize strings as well as numbers, so digits in a nickname are untouched.
 // Account IDs can exceed Number.MAX_SAFE_INTEGER; preserve them before parsing.
-export function parseJSON(raw) {
-  if (typeof raw !== 'string' || raw.length > 1048576) throw error('response')
+export function parseJSON(raw, limit = 1048576) {
+  if (typeof raw !== 'string' || raw.length > limit) throw error('response')
   try {
     return JSON.parse(raw.replace(/"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/g, token =>
       /^-?\d{16,}$/.test(token) ? JSON.stringify(token) : token))
   } catch { throw error('response') }
 }
 
-export function decodeResponse({ status, body }) {
+export function decodeResponse({ status, body }, limit = 1048576) {
   if (status === 401) throw error('session')
   if (status === 429) throw error('rateLimit')
   if (status === 403) throw error('rejected')
   if (status !== 200) throw error('network')
-  const value = parseJSON(body)
+  const value = parseJSON(body, limit)
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw error('response')
   for (const code of [value.error_code, value.status_code, value.status_info?.code, value.data?.error_code]) {
     if (code == null || Number(code) === 0) continue
@@ -77,9 +77,13 @@ function imageURL(value, suffix = '') {
 export function profileOf(payload) {
   const p = payload.my_info || payload.user
   if (!p || !/^\d+$/.test(String(p.id || ''))) throw error('response')
+  const nickname = [p.nickname, p.public_name].find(value => typeof value === 'string' && value.trim()) || '汽水音乐用户'
+  // is_vip is the account service's current membership decision. A tier alone,
+  // an unknown flag or an expired/non-member profile must never create a badge.
+  const tier = p.is_vip === true ? (p.vip_stage === 'svip' ? 'SVIP' : ['vip', 'free_vip'].includes(p.vip_stage) ? 'VIP' : '') : ''
   return {
     id: String(p.id),
-    name: p.nickname || p.public_name || '汽水音乐用户',
+    name: tier ? `${tier} · ${nickname}` : nickname,
     imageUrl: imageURL(p.avatar_url) || imageURL(p.larger_avatar_url) ||
       imageURL(p.medium_avatar_url, '~c5_300x300.jpg') || imageURL(p.thumb_avatar_url, '~c5_100x100.jpg') ||
       imageURL(p.url_avatar, '~c5_300x300.jpg'),

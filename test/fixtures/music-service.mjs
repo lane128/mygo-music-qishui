@@ -17,8 +17,32 @@ globalThis.fetch = async (url, options) => {
   }
   assert.equal(parsed.hostname, 'api.qishui.com')
   assert.equal(options.headers.Cookie, ['sessionid', 'fixture-session'].join('='))
-  if (parsed.pathname === '/luna/pc/me/playlist') return json({ playlists: [playlist] })
-  if (parsed.pathname === '/luna/pc/playlist/detail') return json({ playlist, media_resources: [{ type: 'track', entity: { track_wrapper: { track } } }], has_more: false })
+  if (parsed.pathname === '/luna/pc/me') return json({ my_info: { id: '123', nickname: 'Fixture account', is_vip: true, vip_stage: 'svip' } })
+  if (parsed.pathname === '/luna/pc/me/playlist') return json({ playlists: Array.from({ length: 7 }, (_, i) => ({ ...playlist, id: String(123 + i), title: `Fixture Playlist ${i}`, count_tracks: i === 1 ? 0 : i === 6 ? 'not-a-count' : 1, ...(i === 0 ? { count_tracks: 0, resource_cnt: { track_cnt: 1 } } : {}), ...(i === 2 ? { resource_cnt: { track_cnt: 2 } } : {}) })) })
+  if (parsed.pathname === '/luna/pc/me/recently-played-media') {
+    assert.equal(options.method, 'GET')
+    assert.equal(options.body, undefined)
+    assert.equal(options.headers['X-SS-STUB'], undefined)
+    assert.ok(options.headers['x-helios'])
+    assert.ok(options.headers['x-medusa'])
+    assert.equal(parsed.searchParams.get('count'), '1000')
+    assert.equal(parsed.searchParams.get('cursor'), '')
+    assert.equal(parsed.searchParams.get('media_type'), '')
+    assert.equal(parsed.searchParams.get('scene'), '')
+    return json({ media: [{ entity: { track } }, { entity: { track_wrapper: { track: { ...track, id: '2' } } } }, { entity: { video: { video_id: '3' } } }], has_more: false })
+  }
+  if (parsed.pathname === '/luna/pc/playlist/detail') {
+    const playlistID = parsed.searchParams.get('playlist_id')
+    if (playlistID === '124') return json({ has_more: false, next_cursor: 0 })
+    if (playlistID === '125') return json({ playlist: { ...playlist, id: '125', count_tracks: '1' }, media_resources: [{ entity: { track } }], has_more: false, next_cursor: 0 })
+    if (playlistID === 'empty-omitted' || playlistID === 'empty-null' || playlistID === 'empty-string-zero') return json({
+      playlist: { id: playlistID, title: 'Empty fixture', count_tracks: playlistID === 'empty-string-zero' ? '0' : 0, desc: 'Empty description', cover_url: 'https://example.invalid/empty.jpg' },
+      next_cursor: 0,
+      ...(playlistID === 'empty-null' ? { media_resources: null } : {}),
+      has_more: false,
+    })
+    return json({ playlist, media_resources: [{ type: 'track', entity: { track_wrapper: { track } } }], has_more: false })
+  }
   if (parsed.pathname === '/luna/search/track') return json({ result_groups: [{ data: [{ entity: { track } }], has_more: false }] })
   if (parsed.pathname === '/luna/pc/feed/mode') {
     assert.ok(options.headers['x-helios'])

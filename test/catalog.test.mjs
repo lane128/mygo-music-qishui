@@ -8,6 +8,42 @@ const resource = id => ({ type: 'track', entity: { track_wrapper: { track: track
 const playlist = { id: '123', public_title: '我的歌单', resource_cnt: { track_cnt: 3 } }
 const wire = value => new Response(JSON.stringify(value))
 
+// Count validation once rejected the entire sidebar when one entry had legacy zero or inconsistent count metadata.
+test('keeps every sidebar playlist and history when optional counts vary or are malformed', async () => {
+  const cases = [
+    [{ count_tracks: 0, resource_cnt: { track_cnt: 3 } }, 3],
+    [{ count_tracks: 3, resource_cnt: { track_cnt: 0 } }, 3],
+    [{ count_tracks: '0', resource_cnt: { track_cnt: '3' } }, 3],
+    [{ count_tracks: 2, resource_cnt: { track_cnt: 3 } }, undefined],
+    [{ count_tracks: 'not-a-count' }, undefined],
+    [{ count_tracks: -1 }, undefined],
+    [{}, undefined],
+  ]
+  const raw = cases.map(([counts], i) => ({ id: String(100 + i), title: `Playlist ${i}`, ...counts }))
+  const catalog = new Catalog(session, { request: async () => ({ playlists: raw }) })
+  const lists = await catalog.playlists()
+  assert.deepEqual(lists.map(p => p.id), [...raw.map(p => p.id), 'qishui:history'])
+  for (const [i, [, count]] of cases.entries()) assert.equal(lists[i].trackCount, count)
+  assert.deepEqual(lists.slice(0, -1).map(p => p.name), raw.map(p => p.title))
+})
+
+// A default zero is not an assertion that the alternate positive count is corrupt or that the playlist is empty.
+test('opens zero-default count variants without weakening content completeness checks', async () => {
+  for (const counts of [{ count_tracks: 0, resource_cnt: { track_cnt: 3 } }, { count_tracks: 3, resource_cnt: { track_cnt: 0 } }]) {
+    const raw = { id: '123', title: 'Library', ...counts }
+    const catalog = new Catalog(session, { request: async () => ({ playlist: raw, media_resources: ['1', '2', '3'].map(resource) }) })
+    const result = await catalog.playlist('123')
+    assert.equal(result.trackCount, 3)
+    assert.equal(result.tracks.length, 3)
+    for (const body of [{ playlist: raw }, { playlist: raw, media_resources: [resource('1')] }]) {
+      await assert.rejects(new Catalog(session, { request: async () => body }).playlist('123'), { kind: 'response' })
+    }
+  }
+  for (const counts of [{ count_tracks: 2, resource_cnt: { track_cnt: 3 } }, { count_tracks: 'bad' }]) {
+    await assert.rejects(new Catalog(session, { request: async () => ({ playlist: { id: '123', title: 'Library', ...counts }, media_resources: [], has_more: false }) }).playlist('123'), { kind: 'response' })
+  }
+})
+
 // Personal playlists and their tracks must survive opaque cursors and an omitted terminal list.
 test('loads complete playlists, deduplicates boundary tracks, preserves IDs and milliseconds', async () => {
   const calls = []
@@ -42,6 +78,115 @@ test('rejects identity mismatches, missing first-page resources, and nonadvancin
     const catalog = new Catalog(session, { request: async () => response })
     await assert.rejects(catalog.playlist('123'), e => e.kind === 'response')
   }
+})
+
+// Empty first pages previously failed when the service omitted media_resources or encoded it as null.
+test('loads confirmed empty playlists with absent, null or empty resources and retains metadata', async () => {
+  for (const count of [{ count_tracks: 0 }, { resource_cnt: { track_cnt: 0 } }, { count_tracks: 0, resource_cnt: { track_cnt: 0 } }]) {
+    for (const resources of [{}, { media_resources: null }, { media_resources: [] }]) {
+      const raw = { id: '123', title: 'Empty fixture', cover_url: 'https://example.invalid/empty.jpg', desc: 'Fixture description', ...count }
+      const catalog = new Catalog(session, { request: async () => ({ playlist: raw, ...resources }) })
+      const result = await catalog.playlist('123')
+      assert.equal(result.id, raw.id)
+      assert.equal(result.name, raw.title)
+      assert.equal(result.imageUrl, raw.cover_url)
+      assert.equal(result.description, raw.desc)
+      assert.equal(result.trackCount, 0)
+      assert.deepEqual(result.tracks, [])
+    }
+  }
+})
+
+// Compatibility with empty fields must not hide unknown counts, partial data, invalid types or pagination evidence.
+test('rejects missing resources unless the first page is explicitly empty and terminal', async () => {
+  for (const resources of [{}, { media_resources: null }]) {
+    for (const extra of [
+      { playlist: { id: '123', title: 'Unknown count' } },
+      { playlist },
+      { playlist: { id: '123', title: 'Invalid count', count_tracks: 'not-a-count' } },
+      { playlist: { id: '123', title: 'Conflicting counts', count_tracks: 0, resource_cnt: { track_cnt: 3 } } },
+      { has_more: true, next_cursor: 'next' },
+      { next_cursor: 'next' },
+      { next_cursor: 1 },
+      { has_more: 'false' },
+      { playlist: { id: '456', title: 'Wrong identity', count_tracks: 0 } },
+    ]) {
+      const catalog = new Catalog(session, { request: async () => ({ playlist: { id: '123', title: 'Empty', count_tracks: 0 }, ...resources, ...extra }) })
+      await assert.rejects(catalog.playlist('123'), { kind: 'response' })
+    }
+  }
+  for (const media_resources of [{}, '', false, 0]) {
+    const catalog = new Catalog(session, { request: async () => ({ playlist: { id: '123', title: 'Empty', count_tracks: 0 }, media_resources }) })
+    await assert.rejects(catalog.playlist('123'), { kind: 'response' })
+  }
+})
+
+// Null terminal continuations must keep the songs already loaded, just like omitted terminal lists.
+test('keeps accumulated tracks on a null terminal continuation and rejects a missing advancing page', async () => {
+  for (const ending of [{ has_more: false }, { next_cursor: 'opaque:end' }, {}]) {
+    const pages = [{ playlist, media_resources: [resource('1')], next_cursor: 'opaque:end', has_more: true }, { playlist, media_resources: null, ...ending }]
+    const catalog = new Catalog(session, { request: async () => pages.shift() })
+    assert.deepEqual((await catalog.playlist('123')).tracks.map(t => t.id), ['1'])
+  }
+  for (const extra of [{ has_more: true }, { next_cursor: 'advanced' }]) {
+    const catalog = new Catalog(session, { request: async () => ({ playlist, media_resources: null, ...extra }) })
+    await assert.rejects(catalog.playlistPage('123', 'opaque:end'), { kind: 'response' })
+  }
+})
+
+// The PC API can encode zero counts/cursors as numbers or strings and omit the count on an explicitly terminal empty list.
+test('normalizes zero values and accepts explicitly terminal empty responses without a count', async () => {
+  for (const count of [{ count_tracks: '0' }, { resource_cnt: { track_cnt: '0' } }, {}]) {
+    for (const next_cursor of [0, '0', '', undefined]) {
+      const catalog = new Catalog(session, { request: async () => ({ playlist: { id: '123', title: 'Empty', ...count }, media_resources: null, has_more: false, next_cursor }) })
+      assert.deepEqual((await catalog.playlist('123')).tracks, [])
+    }
+  }
+  const catalog = new Catalog(session, { request: async () => ({ playlist, has_more: false }) })
+  await assert.rejects(catalog.playlist('123'), { kind: 'response' })
+})
+
+// Empty detail responses can omit playlist metadata; use only this account's matching library entry, as the official navigation fallback does.
+test('recovers missing detail metadata from the matching library while rejecting mismatched identities', async () => {
+  for (const detail of [
+    { has_more: false },
+    { playlist: { id: '123' }, media_resources: null, has_more: false },
+    { playlist: { id: '123' }, media_resources: [{ entity: { track: track('8') } }], has_more: false },
+  ]) {
+    const calls = []
+    const catalog = new Catalog(session, { request: async (_, path) => {
+      calls.push(path)
+      return path.endsWith('/detail') ? detail : { playlists: [{ id: '123', title: 'Library metadata', count_tracks: 0, cover_url: 'https://example.invalid/cover.jpg', desc: 'Original description' }] }
+    } })
+    const result = await catalog.playlist('123')
+    assert.equal(result.name, 'Library metadata')
+    assert.equal(result.imageUrl, 'https://example.invalid/cover.jpg')
+    assert.equal(result.description, 'Original description')
+    assert.equal(result.tracks.length, detail.media_resources?.length || 0)
+    assert.deepEqual(calls, ['/luna/pc/playlist/detail', '/luna/pc/me/playlist'])
+  }
+  for (const detail of [{}, { playlist: { id: '456' }, has_more: false }]) {
+    const catalog = new Catalog(session, { request: async (_, path) => path.endsWith('/detail') ? detail : { playlists: [{ id: '123', title: 'Known', count_tracks: 0 }] } })
+    await assert.rejects(catalog.playlist('123'), { kind: 'response' })
+  }
+  const missing = new Catalog(session, { request: async (_, path) => path.endsWith('/detail') ? { has_more: false } : { playlists: [{ id: '456', title: 'Another list', count_tracks: 0 }] } })
+  await assert.rejects(missing.playlist('123'), { kind: 'response' })
+})
+
+// Official media resources can carry a direct track, a wrapped track, or a video; missing type must not drop a valid song.
+test('loads both official track entity variants without fabricating songs from videos', async () => {
+  const catalog = new Catalog(session, { request: async () => ({ playlist, has_more: false, media_resources: [resource('1'), { entity: { track: track('2') } }, { type: 'track', entity: { track: track('3') } }, { type: 'video', entity: { video: { id: '4' } } }] }) })
+  assert.deepEqual((await catalog.playlist('123')).tracks.map(t => t.id), ['1', '2', '3'])
+})
+
+// A present but malformed direct entity used to be silently skipped and could turn a broken playlist into an empty success.
+test('rejects malformed direct and wrapped songs while preserving unsupported resource filtering', async () => {
+  for (const entity of [{ track: null }, { track: {} }, { track_wrapper: null }, { track_wrapper: {} }]) {
+    const catalog = new Catalog(session, { request: async () => ({ playlist, has_more: false, media_resources: [{ entity }] }) })
+    await assert.rejects(catalog.playlist('123'), { kind: 'response' })
+  }
+  const unknown = new Catalog(session, { request: async () => ({ playlist, has_more: false, media_resources: [{ entity: { future_resource: {} } }] }) })
+  assert.deepEqual((await unknown.playlist('123')).tracks, [])
 })
 
 // MyGO gives item offsets while Qishui uses opaque search cursors.
@@ -124,15 +269,30 @@ test('rejects mismatched lyric identity and malformed public lyric responses', a
   }
 })
 
-// The home must expose real account playlists even when recommendation signing is unavailable.
-test('home lists real playlists without requesting playback or recommendation grants', async () => {
-  const catalog = new Catalog(session, { request: async (_, path) => {
-    assert.equal(path, '/luna/pc/me/playlist')
-    return { playlists: [playlist] }
+// Discovery failures must reach the host's error handling rather than masquerading as an empty successful page.
+test('home propagates discovery failures without requesting personal playlists or playback', async () => {
+  for (const kind of ['setup', 'signature', 'network', 'response', 'session']) {
+    const calls = []
+    const catalog = new Catalog(session, { request: async (_, path) => {
+      calls.push(path)
+      throw Object.assign(new Error('fixture'), { kind })
+    } })
+    await assert.rejects(catalog.home(), { kind })
+    assert.deepEqual(calls, ['/luna/pc/discover'])
+  }
+})
+
+// Sign-out and worker deadlines must still cancel the discovery-only Home operation.
+test('home preserves caller cancellation', async () => {
+  const parent = new AbortController()
+  const catalog = new Catalog(session, { signal: parent.signal, request: async (_, path, { signal }) => {
+    assert.equal(path, '/luna/pc/discover')
+    signal.throwIfAborted()
+    return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
   } })
-  const home = await catalog.home()
-  assert.equal(home.sections[0].playlists[0].id, '123')
-  assert.equal(home.sections[1].links[0].page, 'recommendations')
+  const pending = catalog.home()
+  parent.abort()
+  await assert.rejects(pending, { name: 'AbortError' })
 })
 
 // Response limits and error envelopes must be enforced before content reaches MyGO.

@@ -4,6 +4,8 @@ import { API, cookieHeader, decodeResponse, error } from './protocol.mjs'
 import { feedBody, modesOf } from './discovery.mjs'
 import { sceneCover } from './scene-art.mjs'
 import { discoveryBody, discoveryOf } from './exploration.mjs'
+import { homePage } from './home-page.mjs'
+import { HISTORY_ID, HISTORY_PATH, HISTORY_LIMIT, historyPlaylist } from './history.mjs'
 
 const PAGE_SIZE = 20
 const idOf = value => {
@@ -25,7 +27,7 @@ export function pcCatalogParams(session) {
     device_platform: 'windows', device_type: 'Windows', os_version: 'Windows 11', fp: session.deviceID,
   })
 }
-const paths = new Set(['/luna/pc/me/playlist', '/luna/pc/playlist/detail', '/luna/search/track', '/luna/pc/track_v2', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks'])
+const paths = new Set([HISTORY_PATH, '/luna/pc/me/playlist', '/luna/pc/playlist/detail', '/luna/search/track', '/luna/pc/track_v2', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks'])
 export async function requestJSON(session, path, { query = {}, body, signed = false, signal } = {}, deps = {}) {
   if (!paths.has(path)) throw error('response')
   const cookies = validateSession(session)
@@ -42,7 +44,6 @@ export async function requestJSON(session, path, { query = {}, body, signed = fa
     headers['Content-Type'] = 'application/json; charset=UTF-8'
   }
   if (signed) {
-    if (data === undefined) throw error('response')
     params.set('version_name', '3.7.0')
     params.set('version_code', '30070000')
     params.set('device_platform', 'mac')
@@ -50,8 +51,8 @@ export async function requestJSON(session, path, { query = {}, body, signed = fa
     params.set('os_version', 'darwin')
     Object.assign(headers, {
       'User-Agent': 'LunaPC/3.7.0(452316191)', 'Accept-Encoding': 'identity',
-      'X-Luna-Background-Type': 'foreground', 'X-Luna-Is-Background-Req': '0', 'X-Luna-Is-Local-User': '0',
-      'X-SS-STUB': createHash('md5').update(data).digest('hex').toUpperCase(),
+      'X-Luna-Background-Type': 'foreground', 'X-Luna-Is-Background-Req': '0', 'X-Luna-Is-Local-User': path === HISTORY_PATH ? '1' : '0',
+      ...(data === undefined ? {} : { 'X-SS-STUB': createHash('md5').update(data).digest('hex').toUpperCase() }),
     })
   }
   params.sort()
@@ -65,10 +66,10 @@ export async function requestJSON(session, path, { query = {}, body, signed = fa
         Object.values(result).some(value => typeof value !== 'string' || !value || /[\r\n\0]/.test(value))) throw error('signature')
     Object.assign(headers, result)
   }
-  return fetchJSON(url, { headers, body: data, method: data === undefined ? 'GET' : 'POST', signal }, deps.fetch)
+  return fetchJSON(url, { headers, body: data, method: data === undefined ? 'GET' : 'POST', signal }, deps.fetch, path === HISTORY_PATH ? 8 * 1048576 : 1048576)
 }
 
-async function fetchJSON(url, options, request = fetch) {
+async function fetchJSON(url, options, request = fetch, limit = 1048576) {
   let response
   try {
     response = await request(url, { ...options, redirect: 'error', signal: options.signal || AbortSignal.timeout(20000) })
@@ -79,7 +80,7 @@ async function fetchJSON(url, options, request = fetch) {
     const decoder = new TextDecoder()
     for await (const chunk of response.body) {
       bytes += chunk.length
-      if (bytes > 1048576) {
+      if (bytes > limit) {
         await response.body.cancel?.().catch(() => {})
         throw error('response')
       }
@@ -87,7 +88,7 @@ async function fetchJSON(url, options, request = fetch) {
     }
     body += decoder.decode()
   } catch (err) { throw err.kind ? err : error('network') }
-  return decodeResponse({ status: response.status, body })
+  return decodeResponse({ status: response.status, body }, limit)
 }
 
 export function image(raw, suffix = '~c5_375x375.jpg') {
@@ -113,13 +114,53 @@ export function trackOf(raw) {
     album: { id: raw.album?.id == null ? '' : idOf(raw.album.id), name: raw.album?.name || '', imageUrl: image(raw.album?.cover_url || raw.album?.url_cover) },
   }
 }
+function playlistCount(raw, strict = true) {
+  const counts = [raw.count_tracks, raw.resource_cnt?.track_cnt].filter(value => value != null).map(value => {
+    if (typeof value === 'string' && /^\d{1,16}$/.test(value)) value = Number(value)
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+  })
+  // The legacy count may be zero while resource_cnt supplies the real count,
+  // as in the reference client. Conflicting positive counts remain ambiguous.
+  const positive = counts.filter(value => value > 0)
+  if (counts.includes(undefined) || positive.some(value => value !== positive[0])) {
+    if (strict) throw error('response')
+    return undefined
+  }
+  return positive[0] ?? counts[0]
+}
+
+function paginationOf(result, cursor) {
+  const raw = result.next_cursor
+  const next = raw == null ? '' : typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0 ? String(raw) : raw
+  if (typeof next !== 'string' || next.length > 8192 || /[\x00-\x1f\x7f]/.test(next) || (result.has_more != null && typeof result.has_more !== 'boolean')) throw error('response')
+  const more = result.has_more ?? !!(next && next !== '0' && next !== cursor)
+  if (more && (!next || next === cursor)) throw error('response')
+  return { cursor: next, more }
+}
+
 export function playlistOf(raw) {
   if (!raw || typeof (raw.title || raw.public_title) !== 'string') throw error('response')
+  // Sidebar counts are optional metadata: a bad count must not hide every
+  // valid playlist. Content loading still validates counts in playlistPage.
+  const count = playlistCount(raw, false)
   return {
     id: idOf(raw.id), name: raw.title || raw.public_title,
-    trackCount: raw.count_tracks || raw.resource_cnt?.track_cnt || 0,
+    ...(count == null ? {} : { trackCount: count }),
     imageUrl: image(raw.cover_url || raw.url_cover, '~c5_300x300.jpg'), description: raw.desc || '',
   }
+}
+
+// The PC client supports both direct track entities and wrapped track entities.
+function tracksOf(resources) {
+  const tracks = []
+  for (const item of resources) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw error('response')
+    const raw = item.entity?.track ?? item.entity?.track_wrapper?.track
+    if (item.type === 'video' || item.entity?.video) continue
+    if (raw != null) tracks.push(trackOf(raw))
+    else if (item.type === 'track' || (item.entity && (Object.hasOwn(item.entity, 'track') || Object.hasOwn(item.entity, 'track_wrapper')))) throw error('response')
+  }
+  return tracks
 }
 
 export class Catalog {
@@ -133,7 +174,7 @@ export class Catalog {
   async playlists() {
     const result = await this.request('/luna/pc/me/playlist', { query: { aid: '386088', version_code: '30020100' } })
     if (!Array.isArray(result.playlists)) throw error('response')
-    return result.playlists.map(playlistOf)
+    return [...result.playlists.map(playlistOf), historyPlaylist()]
   }
   async playlistPage(id, cursor = '') {
     idOf(id)
@@ -142,21 +183,39 @@ export class Catalog {
     query.set('cursor', cursor)
     query.set('count', '100')
     const result = await this.request('/luna/pc/playlist/detail', { query })
-    const playlist = playlistOf(result.playlist)
-    if (playlist.id !== id) throw error('response')
-    const next = result.next_cursor ?? ''
-    if (typeof next !== 'string' || (result.has_more != null && typeof result.has_more !== 'boolean')) throw error('response')
+    if (!result || typeof result !== 'object' || Array.isArray(result) || !['playlist', 'media_resources', 'has_more', 'status_info'].some(key => key in result)) throw error('response')
+    const page = paginationOf(result, cursor)
+    let raw = result.playlist
+    if (raw != null && (typeof raw !== 'object' || Array.isArray(raw))) throw error('response')
+    if (raw?.id != null && idOf(raw.id) !== id) throw error('response')
+    // The official client falls back to navigation metadata for empty details.
+    // Resolve that metadata from this account's library, never from a title or
+    // a guessed system-list ID. A mismatched returned identity is never repaired.
+    if (raw?.id == null || typeof (raw.title || raw.public_title) !== 'string') {
+      const library = await this.request('/luna/pc/me/playlist', { query: { aid: '386088', version_code: '30020100' } })
+      if (!Array.isArray(library.playlists)) throw error('response')
+      const known = library.playlists.find(item => item?.id != null && idOf(item.id) === id)
+      if (!known) throw error('response')
+      const detailCounts = raw && (raw.count_tracks != null || raw.resource_cnt?.track_cnt != null)
+        ? { count_tracks: raw.count_tracks, resource_cnt: raw.resource_cnt } : {}
+      raw = { ...known, ...raw, ...detailCounts, id, title: raw?.title || raw?.public_title || known.title || known.public_title }
+    }
+    const playlist = playlistOf(raw)
+    const count = playlistCount(raw)
     if (!Array.isArray(result.media_resources)) {
-      if (!('media_resources' in result) && cursor && !result.has_more && (!next || next === cursor)) return { playlist, tracks: [], more: false, cursor: next }
+      const terminal = !page.more && (!page.cursor || page.cursor === '0' || page.cursor === cursor || result.has_more === false)
+      const confirmedEmpty = count === 0 || (count == null && result.has_more === false)
+      if (result.media_resources == null && terminal && (cursor || confirmedEmpty)) {
+        return { playlist, tracks: [], ...page }
+      }
       throw error('response')
     }
-    const tracks = result.media_resources.filter(item => item.type === 'track').map(item => trackOf(item.entity?.track_wrapper?.track))
-    let more = result.has_more ?? !!(next && next !== cursor)
-    if (result.has_more == null && !more && !cursor && (playlist.trackCount > tracks.length || (tracks.length && !playlist.trackCount))) throw error('response')
-    if (more && (!next || next === cursor)) throw error('response')
-    return { playlist, tracks, more, cursor: next }
+    const tracks = tracksOf(result.media_resources)
+    if (result.has_more == null && !page.more && !cursor && (count > tracks.length || (tracks.length && count == null))) throw error('response')
+    return { playlist, tracks, ...page }
   }
   async playlist(id) {
+    if (id === HISTORY_ID) return this.history()
     const tracks = new Map()
     const cursors = new Set([''])
     let cursor = ''
@@ -164,6 +223,30 @@ export class Catalog {
       const page = await this.playlistPage(id, cursor)
       for (const track of page.tracks) tracks.set(track.id, track)
       if (!page.more) return { ...page.playlist, tracks: [...tracks.values()] }
+      if (cursors.has(page.cursor)) throw error('response')
+      cursor = page.cursor
+      cursors.add(cursor)
+    }
+    throw error('response')
+  }
+  async history() {
+    const tracks = new Map()
+    const cursors = new Set([''])
+    let cursor = '', mediaCount = 0
+    for (let pageCount = 0; pageCount < 50; pageCount++) {
+      const result = await this.request(HISTORY_PATH, {
+        signed: true,
+        query: { cursor, count: String(HISTORY_LIMIT - mediaCount), media_type: '', scene: '' },
+      })
+      const page = paginationOf(result, cursor)
+      const empty = result.media == null && !page.more && (result.has_more === false || (result.status_info && typeof result.status_info === 'object' && !Array.isArray(result.status_info)))
+      const media = empty ? [] : result.media
+      if (!Array.isArray(media) || media.length > HISTORY_LIMIT - mediaCount) throw error('response')
+      for (const track of tracksOf(media)) if (!tracks.has(track.id)) tracks.set(track.id, track)
+      mediaCount += media.length
+      if (!page.more || mediaCount >= HISTORY_LIMIT) {
+        return { ...historyPlaylist(), trackCount: tracks.size, tracks: [...tracks.values()] }
+      }
       if (cursors.has(page.cursor)) throw error('response')
       cursor = page.cursor
       cursors.add(cursor)
@@ -227,11 +310,8 @@ export class Catalog {
     throw error('response')
   }
   async home() {
-    return { title: '汽水音乐', sections: [
-      { title: '我的歌单', playlists: await this.playlists() },
-      { title: '发现音乐', links: [{ title: '推荐', page: 'recommendations' }, { title: '听歌模式', page: 'listening-modes' }] },
-      { title: '持续听歌', stations: [{ id: 'recommendations', name: '播放推荐', description: '按当前账号持续推荐歌曲' }] },
-    ] }
+    const discovery = await this.discoveryPage()
+    return homePage(discovery.items)
   }
   async listeningModes() {
     const result = await this.request('/luna/pc/feed/mode', { signed: true, body: {} })

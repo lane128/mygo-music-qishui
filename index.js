@@ -71,7 +71,7 @@ function startHelper() {
           rejected: "汽水拒绝了本次请求，请稍后重试。",
           session: "未取得有效的汽水登录态，请重新登录。",
           network: "无法连接汽水音乐，请检查网络后重试。",
-          response: "汽水接口返回异常，请稍后重试。",
+          response: spec.method === "playlist" ? (spec.params?.id === "qishui:history" ? "暂时无法读取播放历史，请稍后重试。" : "暂时无法读取歌单内容，请稍后重试。") : "汽水接口返回异常，请稍后重试。",
           unsupported: "暂不支持此操作，目前可以搜索歌曲、浏览歌单和推荐。",
           unavailable: "当前账号无法播放这首歌曲，或获准的音频格式暂不支持。",
           preview: "当前账号仅获准试听，请在汽水音乐官方 App 查看播放权限。",

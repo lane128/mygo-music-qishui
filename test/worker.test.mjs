@@ -22,14 +22,55 @@ test('actual worker serves catalog results and remains usable after an unsupport
   }
   try {
     const home = await request('home')
-    assert.equal(home.ok, true)
-    assert.equal(home.result.sections[0].playlists[0].id, '123')
+    if (nativeReady) {
+      assert.equal(home.ok, true)
+      assert.equal(home.result.sections.length, 1)
+      assert.equal(home.result.sections[0].stations[0].id, 'radio:42')
+      assert.equal(home.result.sections[0].playlists, undefined)
+      assert.equal(home.result.sections[0].morePage, 'listening-modes')
+    } else {
+      assert.equal(home.ok, false)
+      assert.equal(home.error, 'setup')
+    }
+    const library = await request('playlists')
+    assert.equal(library.ok, true)
+    assert.deepEqual(library.result.slice(0, -1).map(p => p.id), ['123', '124', '125', '126', '127', '128', '129'])
+    assert.equal(library.result.length, 8)
+    assert.equal(library.result[0].trackCount, 1)
+    assert.equal(library.result[2].trackCount, undefined)
+    assert.equal(library.result.at(-2).trackCount, undefined)
+    assert.equal(library.result.at(-2).id, '129')
+    assert.equal(library.result.at(-1).id, 'qishui:history')
+    assert.match(library.result.at(-1).imageUrl, /^file:/)
+    for (const id of ['empty-omitted', 'empty-null', 'empty-string-zero']) {
+      const empty = await request('playlist', { id })
+      assert.equal(empty.ok, true)
+      assert.equal(empty.result.id, id)
+      assert.equal(empty.result.name, 'Empty fixture')
+      assert.equal(empty.result.description, 'Empty description')
+      assert.equal(empty.result.imageUrl, 'https://example.invalid/empty.jpg')
+      assert.deepEqual(empty.result.tracks, [])
+    }
+    const recovered = await request('playlist', { id: '124' })
+    assert.equal(recovered.ok, true)
+    assert.equal(recovered.result.name, 'Fixture Playlist 1')
+    assert.deepEqual(recovered.result.tracks, [])
+    assert.equal((await request('playlist', { id: '125' })).result.tracks[0].id, '7123456789012345678')
+    if (nativeReady) {
+      const history = await request('playlist', { id: 'qishui:history' })
+      assert.equal(history.ok, true)
+      assert.deepEqual(history.result.tracks.map(t => t.id), ['7123456789012345678', '2'])
+    }
     assert.equal((await request('unsupported')).error, 'unsupported')
     const playlist = await request('playlist', { id: '123' })
     assert.equal(playlist.result.tracks[0].duration, 180000)
     const search = await request('search', { query: '音乐' })
     assert.equal(search.result.tracks[0].id, '7123456789012345678')
     assert.equal((await request('lyrics', { id: '7123456789012345678' })).result.lrc, '[00:01.00]歌词')
+    child.stdin.write(JSON.stringify({ op: 'account', session }) + '\n')
+    const account = JSON.parse((await lines.next()).value)
+    assert.equal(account.ok, true)
+    assert.equal(account.account.name, 'SVIP · Fixture account')
   } finally {
     child.stdin.end()
     assert.equal(await exit, 0)

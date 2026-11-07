@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
-import { API, Login, accountURL, cookieHeader, decodeResponse, parseJSON, restoreAccount } from '../helper/protocol.mjs'
+import { API, Login, accountURL, cookieHeader, decodeResponse, parseJSON, profileOf, restoreAccount } from '../helper/protocol.mjs'
 
 const challenge = { token: 'test-challenge', qrcode_index_url: 'https://bff-pc.qishui.com/ucenter_web/app/sdk-next?token=test-challenge&uc_sdk=scan-auth', is_frontier: false }
 const accountBody = '{"my_info":{"id":7123456789012345678,"public_name":"测试账号 7123456789012345678","medium_avatar_url":{"urls":["https://p3-luna.douyinpic.com/img"],"uri":"test/avatar"}}}'
@@ -132,6 +132,35 @@ test('restores the same account without a browser', async () => {
   assert.equal(account.id, '7123456789012345678')
   await assert.rejects(restoreAccount(saved(), async () => new Response('{}', { status: 401 })), { kind: 'session' })
   await assert.rejects(restoreAccount(saved(), async () => { throw new Error('private URL') }), { kind: 'network' })
+})
+
+// Membership belongs before a long nickname; stale tiers and unknown flags must not invent a badge.
+test('formats confirmed membership prefixes without mutating the upstream nickname', () => {
+  const nickname = '这是一位用户名比较长的汽水音乐用户'
+  for (const [fields, prefix] of [
+    [{ is_vip: true, vip_stage: 'vip' }, 'VIP · '],
+    [{ is_vip: true, vip_stage: 'free_vip' }, 'VIP · '],
+    [{ is_vip: true, vip_stage: 'svip' }, 'SVIP · '],
+    [{ is_vip: false, vip_stage: 'svip' }, ''],
+    [{ vip_stage: 'svip' }, ''],
+    [{ is_vip: true, vip_stage: 'future-tier' }, ''],
+    [{ is_vip: true }, ''],
+    [{ is_vip: 'true', vip_stage: 'vip' }, ''],
+    [{}, ''],
+  ]) {
+    const raw = { id: '123', nickname, ...fields }
+    assert.equal(profileOf({ my_info: raw }).name, prefix + nickname)
+    assert.equal(raw.nickname, nickname)
+    assert.equal(profileOf({ user: raw }).id, '123')
+  }
+})
+
+// Each restored account must recompute membership so an expired or downgraded account loses its prefix.
+test('refreshes member display on account restoration and preserves avatar and identity', async () => {
+  for (const [is_vip, name] of [[true, 'SVIP · Example'], [false, 'Example']]) {
+    const account = await restoreAccount(saved(), async () => new Response(JSON.stringify({ my_info: { id: '123', nickname: 'Example', is_vip, vip_stage: 'svip', avatar_url: 'https://example.invalid/avatar.jpg' } })))
+    assert.deepEqual(account, { id: '123', name, imageUrl: 'https://example.invalid/avatar.jpg' })
+  }
 })
 
 // Expired or invalid saved credentials cannot be sent as a Cookie header.

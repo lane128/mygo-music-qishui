@@ -110,6 +110,43 @@ test('loads music after login without settings and keeps stream URLs alive until
   await assert.rejects(s.api.home(), error => error.code === 'signIn')
 })
 
+// Discovery Home must discard a pending result when its account has signed out.
+test('loads exploration home and rejects stale account replies', async () => {
+  const page = { sections: [{ stations: [{ id: 'radio:42', name: 'Picture radio' }], morePage: 'listening-modes' }] }
+  let finish
+  const waiting = new Promise(resolve => { finish = resolve })
+  const s = await sandbox([[{ ok: true, result: page }], [() => waiting]], session)
+  const result = await s.api.home()
+  assert.equal(result.sections[0].stations[0].id, 'radio:42')
+  assert.equal(result.sections[0].morePage, 'listening-modes')
+  assert.equal(s.calls[0].method, 'home')
+  const pending = s.api.home()
+  while (s.calls.length < 2) await new Promise(resolve => setImmediate(resolve))
+  await s.api.signOut()
+  finish(JSON.stringify({ ok: true, result: page }))
+  await assert.rejects(pending, error => error.code === 'signIn')
+  await assert.rejects(s.api.home(), error => error.code === 'signIn')
+  assert.equal(s.spawned(), 2)
+})
+
+// The local history ID must reach the worker unchanged, and stale account results must not populate the next account's history.
+test('routes history lists and invalidates pending results on sign-out', async () => {
+  const list = { id: 'qishui:history', name: '历史播放', tracks: [{ id: '123' }] }
+  let finish
+  const waiting = new Promise(resolve => { finish = resolve })
+  const s = await sandbox([[{ ok: true, result: list }], [() => waiting], [{ ok: false, error: 'response' }]], session)
+  assert.equal((await s.api.playlist({ id: list.id })).tracks[0].id, '123')
+  assert.equal(s.calls[0].method, 'playlist')
+  assert.equal(s.calls[0].params.id, list.id)
+  const pending = s.api.playlist({ id: list.id })
+  while (s.calls.length < 2) await new Promise(resolve => setImmediate(resolve))
+  await s.api.signOut()
+  finish(JSON.stringify({ ok: true, result: list }))
+  await assert.rejects(pending, error => error.code === 'signIn')
+  s.state.set('session', session)
+  await assert.rejects(s.api.playlist({ id: list.id }), error => /播放历史/.test(error.message))
+})
+
 // Background prefetch must not make a new stream wait behind another song's 25-second budget.
 test('resolves concurrent streams independently and bounds retained audio helpers', async () => {
   let first, second;

@@ -26,6 +26,8 @@ https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3
 
 `assets/scene-covers` 的场景图标来自 2026-11-07 汽水公开 `/luna/pc/feed/mode` 元数据所指向的官方 `douyinpic.com` 图片，不含账号数据。本项目为透明白色图标添加有色背景并生成 PNG，供插件在浅色及深色主题下显示；原图标权利仍归原权利人，不纳入本项目 AGPL 授权。背景、熟悉/新鲜模式的本项目图案及生成脚本遵循本项目源码许可。可用 `scripts/build-scene-covers.mjs` 与 `scripts/render-scene-covers.swift` 从公开模式响应重新生成到新目录。
 
+`assets/history.png` 的历史播放图案及 `scripts/render-history-cover.swift` 为本项目生成，遵循本项目源码许可，不复制官方 App 的历史图标。
+
 `audio-convert` 由本项目 `helper/audio-convert.c` 编译，使用 macOS AudioToolbox 将已授权 AAC 转换为 MyGO 支持的 FLAC 容器，不将有损来源标记成无损音质。
 
 完整 ZIP 附带 Node 可执行文件及 `bin/NODE-LICENSE`，其中包含 Node 及其第三方依赖的许可声明。Node 的权利归其贡献者及相关权利人所有。

@@ -37,7 +37,7 @@ func TestQishuiPluginRuntime(t *testing.T) {
 	// This fixture replaces only the upstream service; MyGO executes the real
 	// index.js and starts a real Node process through its permission-gated host.
 	fixture := `import readline from 'node:readline';
-const account = {id: '7123456789012345678', name: 'Test Account'};
+const account = {id: '7123456789012345678', name: 'SVIP · Test Account'};
 for await (const line of readline.createInterface({input: process.stdin})) {
   const spec = JSON.parse(line);
   let frame;
@@ -47,9 +47,9 @@ for await (const line of readline.createInterface({input: process.stdin})) {
     const track = {id: '91', name: 'Fixture Song', duration: 180000, artists: [{id:'92',name:'Artist'}], album:{id:'93',name:'Album'}};
     const playlist = {id:'94',name:'Fixture Playlist',tracks:[track]};
     let result, extra = {};
-    if (spec.method === 'home') result = {title:'Home',sections:[{playlists:[playlist]}]};
-    else if (spec.method === 'playlists') result = [playlist];
-    else if (spec.method === 'playlist') result = playlist;
+    if (spec.method === 'home') result = {title:'汽水音乐',sections:[{stations:Array.from({length:15},(_,i)=>({id:'radio:'+String(42+i),name:'Picture Radio '+i,imageUrl:'https://example.invalid/cover.jpg'})),morePage:'listening-modes'}]};
+    else if (spec.method === 'playlists') result = [playlist, {id:'qishui:history',name:'历史播放'}];
+    else if (spec.method === 'playlist') result = spec.params.id === 'empty-fixture' ? {id:'empty-fixture',name:'Empty fixture',trackCount:0,tracks:[]} : spec.params.id === 'qishui:history' ? {id:'qishui:history',name:'历史播放',tracks:[track]} : playlist;
     else if (spec.method === 'search') result = {tracks:[track],more:false};
     else if (spec.method === 'modes') result = [{id:'preference:familiar',name:'Familiar'},{id:'preference:fresh',name:'Fresh'},{id:'scene:0',name:'Relax'}];
     else if (spec.method === 'modePage') {
@@ -112,7 +112,7 @@ for await (const line of readline.createInterface({input: process.stdin})) {
 	var prompt music.SignInPrompt
 	p.OnSignInPrompt(func(value music.SignInPrompt) { prompt = value })
 	a, err := p.SignIn()
-	if err != nil || a == nil || a.ID != "7123456789012345678" {
+	if err != nil || a == nil || a.ID != "7123456789012345678" || a.Name != "SVIP · Test Account" {
 		t.Fatalf("sign in: %v, %v", a, err)
 	}
 	if prompt.QR != "https://bff-pc.qishui.com/test" {
@@ -122,16 +122,27 @@ for await (const line of readline.createInterface({input: process.stdin})) {
 		t.Fatal("music capabilities were not discovered")
 	}
 	home, err := p.Home()
-	if err != nil || len(home.Sections) == 0 || len(home.Sections[0].Playlists) != 1 || home.Sections[0].Playlists[0].Tracks[0].Source != "qishui-app-login" {
+	if err != nil || len(home.Sections) != 1 || len(home.Sections[0].Stations) != 15 || len(home.Sections[0].Playlists) != 0 {
 		t.Fatalf("home mapping failed: %v", err)
 	}
+	if home.Sections[0].MorePage != "listening-modes" || home.Sections[0].Stations[0].ID != "radio:42" {
+		t.Fatal("home exploration lost its station or destination")
+	}
 	lists, err := p.Playlists()
-	if err != nil || len(lists) != 1 || lists[0].ID != "94" {
+	if err != nil || len(lists) != 2 || lists[0].ID != "94" || lists[1].ID != "qishui:history" {
 		t.Fatalf("playlist list mapping failed: %v", err)
 	}
 	pl, err := p.Playlist("94")
 	if err != nil || len(pl.Tracks) != 1 || pl.Tracks[0].Duration != 180000 {
 		t.Fatalf("playlist tracks mapping failed: %v", err)
+	}
+	empty, err := p.Playlist("empty-fixture")
+	if err != nil || empty.ID != "empty-fixture" || len(empty.Tracks) != 0 || empty.Name != "Empty fixture" {
+		t.Fatalf("empty playlist mapping failed: %v", err)
+	}
+	history, err := p.Playlist("qishui:history")
+	if err != nil || history.ID != "qishui:history" || len(history.Tracks) != 1 || history.Tracks[0].Source != "qishui-app-login" {
+		t.Fatalf("history playlist mapping failed: %v", err)
 	}
 	found, err := p.Search("Fixture", music.SearchTracks, 0)
 	if err != nil || len(found.Tracks) != 1 || found.Tracks[0].Source != "qishui-app-login" {
@@ -267,6 +278,10 @@ func TestQishuiPluginZipInstall(t *testing.T) {
 		if err != nil || len(image) < 8 || string(image[1:4]) != "PNG" {
 			t.Fatalf("MyGO could not fetch the installed scene cover: %v", err)
 		}
+	}
+	historyCover, err := music.Fetch(music.FileURL(filepath.Join(installed, "assets", "history.png")))
+	if err != nil || len(historyCover) < 8 || string(historyCover[1:4]) != "PNG" {
+		t.Fatalf("MyGO could not fetch the installed history cover: %v", err)
 	}
 	p, err := Load(installed, t.TempDir())
 	if err != nil {
