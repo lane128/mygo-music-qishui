@@ -1,55 +1,36 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { scenePage, SCENES_PER_PAGE } from '../helper/scene-pages.mjs'
+import { scenePage } from '../helper/scene-pages.mjs'
 
 const mode = (id, name) => ({ id: 'scene:' + id, name, group: '场景音乐', imageUrl: `https://example.invalid/${id}.png` })
-const common = [{ id: 'preference:familiar', name: '熟悉模式', group: '常用模式' }, { id: 'preference:fresh', name: '新鲜模式', group: '常用模式' }]
+const common = [{ id: 'preference:familiar', name: '熟悉模式' }, { id: 'preference:fresh', name: '新鲜模式' }]
 
-// A category landing must keep common modes playable without dumping every server scene into large cards.
-test('category links retain direct common modes and reach the correct scene IDs', () => {
-  const modes = [...common, mode(0, 'Chill 放松'), mode(1, '快乐时光'), mode(2, '通勤必听'), mode(3, '电音'), mode(4, '粤语'), mode(5, '未来新模式')]
+// Root discovery stays directly playable; its native more link keeps every original mode reachable without categories.
+test('flattens common modes and retains all original scenes through a native section link', () => {
+  const modes = [...common, ...Array.from({ length: 45 }, (_, i) => mode(i, `模式 ${i}`))]
+  modes.at(-1).id = 'scene:9223372036854775807'
   const landing = scenePage(modes)
-  assert.deepEqual(landing.sections[0].stations.map(station => station.id), common.map(station => station.id))
-  const links = landing.sections.flatMap(section => section.links || [])
-  assert.equal(links.length, 6)
-  assert.ok(landing.sections.every(section => !section.stations || section.stations.length <= 2))
-  const reached = links.flatMap(link => {
-    const page = scenePage(modes, link.page)
-    assert.equal(page.sections[0].stations[0].imageUrl, link.imageUrl)
-    return page.sections[0].stations.map(station => station.id)
-  })
-  assert.deepEqual(new Set(reached), new Set(modes.slice(2).map(station => station.id)))
+  assert.deepEqual(landing.sections[0].stations.map(s => s.id), modes.slice(0, 2).map(s => s.id))
+  assert.ok(landing.sections.every(section => !section.links))
+  const all = scenePage(modes, landing.sections[0].morePage)
+  assert.deepEqual(all.sections[0].stations.map(s => s.id), modes.map(s => s.id))
+  assert.equal(all.sections[0].stations.at(-1).imageUrl, modes.at(-1).imageUrl)
 })
 
-// Following every page link must expose all scene identities once without rounding, omission, or unbounded card lists.
-test('paginates large categories with complete forward and backward routes', () => {
-  const scenes = Array.from({ length: 29 }, (_, i) => mode(i, `通勤 ${i}`))
-  scenes[0].id = 'scene:9223372036854775807'
-  const modes = [...common, ...scenes]
-  const start = scenePage(modes).sections.flatMap(section => section.links || [])[0].page
-  const visited = new Set()
-  const reached = []
-  const pending = [start]
-  while (pending.length) {
-    const route = pending.shift()
-    if (visited.has(route)) continue
-    visited.add(route)
-    const page = scenePage(modes, route)
-    const stations = page.sections.flatMap(section => section.stations || [])
-    assert.ok(stations.length > 0 && stations.length <= SCENES_PER_PAGE)
-    reached.push(...stations.map(station => station.id))
-    pending.push(...page.sections.flatMap(section => section.links || []).map(link => link.page))
-  }
-  assert.equal(visited.size, 3)
-  assert.equal(reached.length, scenes.length)
-  assert.deepEqual(new Set(reached), new Set(scenes.map(station => station.id)))
+// Radio and playlist discovery cards retain their native playback semantics and official image URLs.
+test('shows exploration pictures without category or operation cards', () => {
+  const radio = { id: 'radio:42', name: '音乐电台', imageUrl: 'https://example.invalid/photo.jpg', description: '电台介绍' }
+  const playlist = { id: '73', name: '推荐歌单', imageUrl: 'https://example.invalid/list.jpg' }
+  const landing = scenePage(common, 'listening-modes', [{ type: 'radio', item: radio }, { type: 'playlist', item: playlist }])
+  assert.equal(landing.sections[0].morePage, undefined)
+  assert.deepEqual(landing.sections[1].stations, [radio])
+  assert.deepEqual(landing.sections[1].playlists, [playlist])
+  assert.ok(landing.sections.every(section => !section.links))
 })
 
-// Empty categories do not create dead cards, and malformed or out-of-range routes fail explicitly.
-test('does not expose dead categories or accept unsupported pagination routes', () => {
-  const modes = [...common, mode(0, '专注模式')]
-  const landing = scenePage(modes)
-  assert.equal(landing.sections[1].links.length, 1)
-  for (const page of ['listening-modes:focus:0', 'listening-modes:focus:01', 'listening-modes:focus:2', 'listening-modes:focus:1?x=y', 'listening-modes:activity:1', 'listening-modes:unknown:1']) assert.throws(() => scenePage(modes, page), { kind: 'unsupported' })
+// Removed category routes must not silently route to a wrong station or expose dead navigation.
+test('handles empty mode catalogs and rejects obsolete category routes', () => {
   assert.deepEqual(scenePage([]).sections, [])
+  assert.deepEqual(scenePage([], 'scene-modes').sections, [])
+  for (const page of ['listening-modes:focus:1', 'scene-modes:2', 'unknown']) assert.throws(() => scenePage(common, page), { kind: 'unsupported' })
 })

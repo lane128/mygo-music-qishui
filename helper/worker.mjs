@@ -4,6 +4,7 @@ import { Login, error, restoreAccount } from './protocol.mjs'
 import { createBrowser } from './browser.mjs'
 import { Catalog } from './catalog.mjs'
 import { scenePage } from './scene-pages.mjs'
+import { discoverySection } from './exploration.mjs'
 import { audioServer } from './audio-server.mjs'
 
 const send = frame => process.stdout.write(JSON.stringify(frame) + '\n')
@@ -76,7 +77,28 @@ try {
             continue
           }
           case 'modes': result = await catalog.listeningModes(); break
-          case 'modePage': result = scenePage(await catalog.listeningModes(), params.page); break
+          case 'modePage': {
+            if (params.page === 'scene-modes') {
+              result = scenePage(await catalog.listeningModes(), params.page)
+              break
+            }
+            if (params.page !== 'listening-modes') throw error('unsupported')
+            const [modes, page] = await Promise.all([catalog.listeningModes(), catalog.discoveryPage()])
+            if (!ended) send({ ok: true, result: scenePage(modes, params.page, page.items), discovery: page.state, more: page.more })
+            continue
+          }
+          case 'discover': {
+            if (params.state == null) throw error('response')
+            const page = await catalog.discoveryPage(params.state)
+            result = { title: '探索更多新模式', sections: [discoverySection(page.items)] }
+            if (!ended) send({ ok: true, result, discovery: page.state, more: page.more })
+            continue
+          }
+          case 'radio': {
+            const page = await catalog.radioBatch(params)
+            if (!ended) send({ ok: true, ...page })
+            continue
+          }
           case 'feed': result = await catalog.recommendationBatch(params); break
           case 'lyrics': result = await catalog.lyrics(params.id); break
           case 'stream': {

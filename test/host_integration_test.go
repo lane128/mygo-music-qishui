@@ -46,22 +46,35 @@ for await (const line of readline.createInterface({input: process.stdin})) {
   else if (spec.op === 'music') {
     const track = {id: '91', name: 'Fixture Song', duration: 180000, artists: [{id:'92',name:'Artist'}], album:{id:'93',name:'Album'}};
     const playlist = {id:'94',name:'Fixture Playlist',tracks:[track]};
-    let result;
+    let result, extra = {};
     if (spec.method === 'home') result = {title:'Home',sections:[{playlists:[playlist]}]};
     else if (spec.method === 'playlists') result = [playlist];
     else if (spec.method === 'playlist') result = playlist;
     else if (spec.method === 'search') result = {tracks:[track],more:false};
-    else if (spec.method === 'modes') result = [{id:'preference:fresh',name:'Fresh',group:'Preferences'},{id:'scene:0',name:'Relax',group:'Mood'}];
-    else if (spec.method === 'modePage') result = spec.params.page === 'listening-modes'
-      ? {sections:[{stations:[{id:'preference:fresh',name:'Fresh'}]},{links:[{title:'Scenes',page:'listening-modes:other:1'}]}]}
-      : {sections:[{stations:[{id:'scene:0',name:'Relax'}]}]};
+    else if (spec.method === 'modes') result = [{id:'preference:familiar',name:'Familiar'},{id:'preference:fresh',name:'Fresh'},{id:'scene:0',name:'Relax'}];
+    else if (spec.method === 'modePage') {
+      result = spec.params.page === 'listening-modes'
+        ? {sections:[{stations:[{id:'preference:fresh',name:'Fresh'}],morePage:'scene-modes'},{stations:[{id:'radio:42',name:'Picture Radio',imageUrl:'https://example.invalid/cover.jpg'}]}]}
+        : {sections:[{stations:[{id:'scene:0',name:'Relax'}]}]};
+      if (spec.params.page === 'listening-modes') extra = {discovery:{exposure:['42']},more:true};
+    }
+    else if (spec.method === 'discover') {
+      if (spec.params.state.exposure[0] !== '42') throw new Error('lost discovery exposures');
+      result = {sections:[{stations:[{id:'radio:43',name:'Next Picture Radio'}]}]};
+      extra = {more:false};
+    }
+    else if (spec.method === 'radio') {
+      if (spec.params.count > 1 && spec.params.cursor !== 'opaque-radio') throw new Error('lost radio cursor');
+      result = [{...track,id:String(100 + spec.params.count)}];
+      extra = {cursor:'opaque-radio',more:spec.params.count < 2};
+    }
     else if (spec.method === 'feed') {
       if (spec.params.count > 1 && (spec.params.played[0]?.id !== '91' || spec.params.played[0]?.duration !== 180000)) throw new Error('lost continuation feedback');
       result = [{...track,id:String(90 + spec.params.count)}];
     }
     else if (spec.method === 'lyrics') result = {lrc:'[00:01.00]Fixture'};
     else if (spec.method === 'stream') result = {url:'http://127.0.0.1:12345/fixture',type:'flac',quality:'high'};
-    frame = {ok:true,result};
+    frame = {ok:true,result,...extra};
   }
   else frame = {ok: true, account: spec.session.account};
   process.stdout.write(JSON.stringify(frame) + '\n');
@@ -128,16 +141,29 @@ for await (const line of readline.createInterface({input: process.stdin})) {
 		t.Fatal("continuous listening capabilities were not discovered")
 	}
 	modes, err := p.Stations()
-	if err != nil || len(modes) != 3 || modes[2].ID != "scene:0" {
-		t.Fatalf("station mapping failed: %v", err)
+	if err != nil || len(modes) != 3 || modes[2].ID != "preference:fresh" {
+		t.Fatalf("common station mapping failed: %v", err)
 	}
-	grouped, err := p.Browse("listening-modes")
-	if err != nil || len(grouped.Sections) != 2 || len(grouped.Sections[1].Links) != 1 {
-		t.Fatalf("scene category landing failed: %v", err)
+	flat, err := p.Browse("listening-modes")
+	if err != nil || len(flat.Sections) != 2 || len(flat.Sections[1].Stations) != 1 || len(flat.Sections[1].Links) != 0 {
+		t.Fatalf("flat discovery landing failed: %v", err)
 	}
-	category, err := p.Browse(grouped.Sections[1].Links[0].Page)
-	if err != nil || len(category.Sections) != 1 || category.Sections[0].Stations[0].ID != "scene:0" {
-		t.Fatalf("scene category navigation lost its playable station: %v", err)
+	all, err := p.Browse(flat.Sections[0].MorePage)
+	if err != nil || len(all.Sections) != 1 || all.Sections[0].Stations[0].ID != "scene:0" {
+		t.Fatalf("all-mode navigation lost its playable station: %v", err)
+	}
+	nextPage, err := p.Browse(flat.Sections[1].MorePage)
+	if err != nil || nextPage.Sections[0].Stations[0].ID != "radio:43" || nextPage.Sections[0].MorePage != "" {
+		t.Fatalf("native discovery continuation failed: %v", err)
+	}
+	for i, id := range []string{"101", "102"} {
+		next, err := p.StationNext("radio:42")
+		if err != nil || len(next) != 1 || next[0].ID != id || next[0].Source != "qishui-app-login" {
+			t.Fatalf("discovery radio batch %d failed: %v", i, err)
+		}
+	}
+	if next, err := p.StationNext("radio:42"); err != nil || len(next) != 0 {
+		t.Fatalf("ended discovery radio restarted: %v", err)
 	}
 	for _, n := range p.Info().Navigation {
 		if n.Page != "" {

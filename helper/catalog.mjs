@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { API, cookieHeader, decodeResponse, error } from './protocol.mjs'
 import { feedBody, modesOf } from './discovery.mjs'
 import { sceneCover } from './scene-art.mjs'
+import { discoveryBody, discoveryOf } from './exploration.mjs'
 
 const PAGE_SIZE = 20
 const idOf = value => {
@@ -24,7 +25,7 @@ export function pcCatalogParams(session) {
     device_platform: 'windows', device_type: 'Windows', os_version: 'Windows 11', fp: session.deviceID,
   })
 }
-const paths = new Set(['/luna/pc/me/playlist', '/luna/pc/playlist/detail', '/luna/search/track', '/luna/pc/track_v2', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab'])
+const paths = new Set(['/luna/pc/me/playlist', '/luna/pc/playlist/detail', '/luna/search/track', '/luna/pc/track_v2', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks'])
 export async function requestJSON(session, path, { query = {}, body, signed = false, signal } = {}, deps = {}) {
   if (!paths.has(path)) throw error('response')
   const cookies = validateSession(session)
@@ -236,17 +237,26 @@ export class Catalog {
     const result = await this.request('/luna/pc/feed/mode', { signed: true, body: {} })
     return modesOf(result, raw => image(raw, '~c5_300x300.jpg')).map(mode => ({ ...mode, imageUrl: sceneCover(mode) }))
   }
+  async discoveryPage(state) {
+    const initial = state == null
+    const result = await this.request(initial ? '/luna/pc/discover' : '/luna/pc/discover/mix', {
+      signed: true,
+      body: initial ? { first_request: true, pc_new_discover_request: true } : discoveryBody(state),
+    })
+    return discoveryOf(result, { initial, state, cover: raw => image(raw) })
+  }
   async recommendationBatch(params = {}) {
     const result = await this.request('/luna/pc/feed/song-tab', { signed: true, body: feedBody(params) })
-    if (!Array.isArray(result?.items)) throw error('response')
-    const tracks = new Map()
-    for (const item of result.items) {
-      if (!item || typeof item !== 'object') throw error('response')
-      if (item.type !== 'track') continue
-      const track = trackOf(item.entity?.track_wrapper?.track)
-      tracks.set(track.id, track)
-    }
-    return [...tracks.values()]
+    return feedTracks(result)
+  }
+  async radioBatch({ id, cursor = '' } = {}) {
+    if (typeof id !== 'string' || !id.startsWith('radio:')) throw error('unsupported')
+    const radioID = idOf(id.slice(6))
+    if (typeof cursor !== 'string' || cursor.length > 8192) throw error('response')
+    const result = await this.request('/luna/pc/feed/radio/tracks', { signed: true, body: { radio_id: radioID, count: 6, cursor } })
+    if (result.has_more != null && typeof result.has_more !== 'boolean') throw error('response')
+    if (result.next_cursor != null && (typeof result.next_cursor !== 'string' || result.next_cursor.length > 8192)) throw error('response')
+    return { result: feedTracks(result), ...(result.next_cursor == null ? {} : { cursor: result.next_cursor }), more: result.has_more ?? result.items.length > 0 }
   }
   async lyrics(id) {
     idOf(id)
@@ -267,6 +277,17 @@ export class Catalog {
     if (!track?.id) throw error('response')
     return { lrc: '' }
   }
+}
+function feedTracks(result) {
+  if (!Array.isArray(result?.items)) throw error('response')
+  const tracks = new Map()
+  for (const item of result.items) {
+    if (!item || typeof item !== 'object') throw error('response')
+    if (item.type !== 'track') continue
+    const track = trackOf(item.entity?.track_wrapper?.track)
+    tracks.set(track.id, track)
+  }
+  return [...tracks.values()]
 }
 export function normalizeLyrics(raw) {
   // Preserve ordinary LRC too; the PC response uses [milliseconds,duration].

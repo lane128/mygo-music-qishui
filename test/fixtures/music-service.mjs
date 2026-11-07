@@ -27,6 +27,24 @@ globalThis.fetch = async (url, options) => {
     assert.deepEqual(JSON.parse(options.body), {})
     return json({ feed_mode_block: [{ title: '心情', feed_mode: [{ type: 'scene_mode', text: 'Fixture Mode', entity: { feed_scene_mode: { scene_mode_id: 0 } } }] }] })
   }
+  if (parsed.pathname === '/luna/pc/discover' || parsed.pathname === '/luna/pc/discover/mix') {
+    assert.ok(options.headers['x-helios'])
+    assert.ok(options.headers['x-medusa'])
+    const initial = parsed.pathname === '/luna/pc/discover'
+    const body = JSON.parse(options.body)
+    assert.deepEqual(body, initial ? { first_request: true, pc_new_discover_request: true } : { block_type: 'discover_playlist_mix', sub_channel_id: -2, exposure_radio_list: ['42'] })
+    const card = { type: 'discover_radio', inner_block_id: initial ? '42' : '43', resources: [{ type: 'radio', resource_id: initial ? '42' : '43', style: { title: 'Fixture Radio', desc: 'Fixture Description', cover_url_list: ['https://example.invalid/radio.jpg'] } }] }
+    return json(initial ? { blocks: [{ type: 'discover_playlist_mix', inner_block: [card] }] } : { inner_block: [card], has_more: false })
+  }
+  if (parsed.pathname === '/luna/pc/feed/radio/tracks') {
+    assert.ok(options.headers['x-helios'])
+    assert.ok(options.headers['x-medusa'])
+    const body = JSON.parse(options.body)
+    assert.equal(body.radio_id, '42')
+    assert.equal(body.count, 6)
+    assert.equal(body.cursor, 'opaque-radio')
+    return json({ items: [{ type: 'track', entity: { track_wrapper: { track } } }], has_more: false })
+  }
   if (parsed.pathname === '/luna/pc/feed/song-tab') {
     assert.ok(options.headers['x-helios'])
     assert.ok(options.headers['x-medusa'])

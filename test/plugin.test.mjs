@@ -241,31 +241,110 @@ test('coalesces only concurrent requests for the same station', async () => {
   await s.api.signOut()
 })
 
-// Following the plugin's continuation link loads another batch instead of relying on unsupported browse offsets.
-test('recommendation pages expose continuation and modes map to playable station IDs', async () => {
-  const modes = [{ id: 'preference:fresh', name: 'Fresh', group: 'A' }, { id: 'scene:0', name: 'Zero', group: 'B', imageUrl: 'https://example.invalid/cover' }]
-  const modePage = { sections: [{ stations: [modes[0]] }, { links: [{ page: 'listening-modes:other:1' }] }] }
-  const categoryPage = { sections: [{ stations: [modes[1]] }] }
+// Recommendation previews retain native continuation, while common-mode selection avoids the old operation cover cards.
+test('recommendation previews and all-mode navigation remain reachable without action or category cards', async () => {
+  const modes = [{ id: 'preference:familiar', name: 'Familiar' }, { id: 'preference:fresh', name: 'Fresh' }, { id: 'scene:0', name: 'Zero', imageUrl: 'https://example.invalid/cover' }]
+  const modePage = { sections: [{ stations: modes.slice(0, 2), morePage: 'scene-modes' }, { stations: [{ id: 'radio:42', name: 'Discovery Radio' }] }] }
+  const allPage = { sections: [{ stations: modes }] }
   const s = await sandbox([
     [{ ok: true, result: [{ id: '1', duration: 1000 }] }], [{ ok: true, result: [{ id: '2', duration: 1000 }] }],
-    [{ ok: true, result: modePage }], [{ ok: true, result: categoryPage }], [{ ok: true, result: modes }],
+    [{ ok: true, result: modePage }], [{ ok: true, result: allPage }], [{ ok: true, result: modes }],
   ], session)
   const first = await s.api.browse({ page: 'recommendations' })
-  const next = await s.api.browse({ page: first.sections[1].links[0].page })
-  assert.equal(first.sections[1].tracks[0].id, '1')
-  assert.equal(next.sections[1].tracks[0].id, '2')
-  assert.notEqual(first.sections[1].links[0].page, next.sections[1].links[0].page)
-  assert.equal(first.sections[0].stations[0].id, 'recommendations')
+  const next = await s.api.browse({ page: first.sections[0].morePage })
+  assert.equal(first.sections[0].tracks[0].id, '1')
+  assert.equal(next.sections[0].tracks[0].id, '2')
+  assert.notEqual(first.sections[0].morePage, next.sections[0].morePage)
+  assert.ok(first.sections.every(section => !section.links && !section.stations))
   const page = await s.api.browse({ page: 'listening-modes' })
-  const category = await s.api.browse({ page: page.sections[1].links[0].page })
-  assert.equal(category.sections[0].stations[0].id, 'scene:0')
+  const all = await s.api.browse({ page: page.sections[0].morePage })
+  assert.equal(all.sections[0].stations[2].id, 'scene:0')
   assert.equal(s.calls[2].method, 'modePage')
-  assert.equal(s.calls[3].params.page, 'listening-modes:other:1')
+  assert.equal(s.calls[3].params.page, 'scene-modes')
   const stations = await s.api.stations()
-  assert.equal(stations[0].id, 'recommendations')
-  assert.equal(stations[2].id, 'scene:0')
-  assert.equal(stations[2].imageUrl, modes[1].imageUrl)
+  assert.deepEqual(Array.from(stations, mode => mode.id), ['recommendations', 'preference:familiar', 'preference:fresh'])
   await assert.rejects(s.api.browse({ page: 'unsupported' }), error => error.code === 'unsupported')
+  await s.api.signOut()
+})
+
+// A native more link owns a stable snapshot: concurrent refreshes coalesce and failures can retry the same upstream state.
+test('coalesces exploration continuation and retries without skipping an exposure state', async () => {
+  let finish
+  const pending = new Promise(resolve => { finish = resolve })
+  const root = { ok: true, result: { sections: [{ stations: [{ id: 'radio:42' }] }] }, discovery: { exposure: ['42'] }, more: true }
+  const nextFrame = { ok: true, result: { sections: [{ stations: [{ id: 'radio:43' }] }] }, discovery: { exposure: ['42', '43'] }, more: true }
+  const end = { ok: true, result: { sections: [{ stations: [{ id: 'radio:44' }] }] }, more: false }
+  const s = await sandbox([[root], [() => pending], [{ ok: false, error: 'network' }], [end]], session)
+  const landing = await s.api.browse({ page: 'listening-modes' })
+  const route = landing.sections[0].morePage
+  assert.match(route, /^listening-modes:more:\d+$/)
+  const a = s.api.browse({ page: route }), b = s.api.browse({ page: route })
+  while (s.calls.length < 2) await new Promise(resolve => setImmediate(resolve))
+  assert.equal(s.calls.length, 2)
+  assert.deepEqual(s.calls[1].params.state, { exposure: ['42'] })
+  finish(JSON.stringify(nextFrame))
+  const [first, same] = await Promise.all([a, b])
+  assert.equal(first, same)
+  assert.equal((await s.api.browse({ page: route })), first)
+  assert.equal(s.calls.length, 2)
+  const more = first.sections[0].morePage
+  await assert.rejects(s.api.browse({ page: more }))
+  const final = await s.api.browse({ page: more })
+  assert.equal(final.sections[0].stations[0].id, 'radio:44')
+  assert.equal(final.sections[0].morePage, undefined)
+  assert.deepEqual(s.calls[2].params.state, s.calls[3].params.state)
+  await s.api.signOut()
+  await assert.rejects(s.api.browse({ page: route }), error => error.code === 'unsupported')
+})
+
+// Account changes invalidate an old exploration reply and its next-page tokens as well as song feeds.
+test('sign-out discards pending exploration pages and continuation tokens', async () => {
+  let finish
+  const pending = new Promise(resolve => { finish = resolve })
+  const frame = { ok: true, result: { sections: [{ stations: [{ id: 'radio:42' }] }] }, discovery: { exposure: ['42'] }, more: true }
+  const s = await sandbox([[frame], [() => pending]], session)
+  const first = await s.api.browse({ page: 'listening-modes' })
+  const route = first.sections[0].morePage
+  const loading = s.api.browse({ page: route })
+  while (s.calls.length < 2) await new Promise(resolve => setImmediate(resolve))
+  await s.api.signOut()
+  finish(JSON.stringify(frame))
+  await assert.rejects(loading, error => error.code === 'signIn')
+  await assert.rejects(s.api.browse({ page: route }), error => error.code === 'unsupported')
+})
+
+// Radio discovery must use its own feed and reuse server cursors; an ended radio must not restart itself.
+test('continues discovery radios independently from ordinary scene feeds', async () => {
+  const s = await sandbox([
+    [{ ok: true, result: [{ id: '1', duration: 1000 }], cursor: 'opaque-radio', more: true }],
+    [{ ok: true, result: [{ id: '2', duration: 1000 }], more: false }],
+    [{ ok: true, result: [{ id: '3', duration: 1000 }] }],
+  ], session)
+  await s.api.stationNext({ id: 'radio:42' })
+  await s.api.stationNext({ id: 'radio:42' })
+  assert.deepEqual(Array.from(await s.api.stationNext({ id: 'radio:42' })), [])
+  assert.equal(s.calls.length, 2)
+  assert.equal(s.calls[0].method, 'radio')
+  assert.equal(s.calls[0].params.cursor, undefined)
+  assert.equal(s.calls[1].params.cursor, 'opaque-radio')
+  await s.api.stationNext({ id: 'scene:0' })
+  assert.equal(s.calls[2].method, 'feed')
+  assert.equal(s.calls[2].params.cursor, undefined)
+  await s.api.signOut()
+})
+
+// A filtered video-only radio batch still advertises more; MyGO's bounded retries must reach the following song batch.
+test('keeps radio continuation alive after an empty filtered batch', async () => {
+  const s = await sandbox([
+    [{ ok: true, result: [], cursor: 'after-video', more: true }],
+    [{ ok: true, result: [{ id: 'song', duration: 1000 }], more: false }],
+  ], session)
+  assert.equal((await s.api.stationNext({ id: 'radio:42' })).length, 0)
+  assert.equal((await s.api.stationNext({ id: 'radio:42' }))[0].id, 'song')
+  assert.equal(s.calls[1].params.cursor, 'after-video')
+  assert.equal(s.calls[1].params.count, 2)
+  assert.equal((await s.api.stationNext({ id: 'radio:42' })).length, 0)
+  assert.equal(s.calls.length, 2)
   await s.api.signOut()
 })
 

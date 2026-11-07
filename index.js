@@ -8,6 +8,7 @@ const retainedAudio = [];
 const musicHelpers = new Set();
 const searchCursors = new Map();
 const feedStates = new Map();
+const discoveryPages = new Map();
 const FEED_FIRST_USE_KEY = "feed-first-use";
 let browseSequence = 0;
 
@@ -15,6 +16,7 @@ async function closeMusic() {
   retainedAudio.length = 0;
   searchCursors.clear();
   feedStates.clear();
+  discoveryPages.clear();
   const helpers = Array.from(musicHelpers);
   musicHelpers.clear();
   await Promise.all(helpers.map(helper => helper.close()));
@@ -219,13 +221,15 @@ async function nextFeed(id) {
       }
       if (feedStates.size >= 64) throw new Error(t("汽水请求过于频繁，请稍后重试。"));
     }
-    state = { count: 0, played: [], pending: null };
+    state = { count: 0, played: [], pending: null, cursor: undefined, done: false };
     feedStates.set(id, state);
   }
   // Coalesce only the same station. Different modes never share a request queue
   // or wait behind another mode's network deadline.
   if (state.pending) return state.pending;
+  if (state.done) return [];
   const params = { id, count: ++state.count, played: state.played };
+  if (id.startsWith("radio:") && state.cursor !== undefined) params.cursor = state.cursor;
   if (id === "recommendations") {
     let firstUse = host.storage.get(FEED_FIRST_USE_KEY);
     if (!firstUse || firstUse.deviceID !== saved.deviceID || !Number.isSafeInteger(firstUse.time) || firstUse.time <= 0) {
@@ -237,10 +241,16 @@ async function nextFeed(id) {
   }
   const attempt = generation;
   state.pending = (async () => {
-    const reply = await music("feed", params);
+    const reply = await music(id.startsWith("radio:") ? "radio" : "feed", params);
     if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
     const tracks = reply.result;
     if (!Array.isArray(tracks)) throw new Error(t("汽水接口返回异常，请稍后重试。"));
+    if (id.startsWith("radio:")) {
+      if (reply.cursor !== undefined) state.cursor = reply.cursor;
+      // A filtered video-only batch can be empty while the radio has more.
+      // MyGO retries empty batches at most three times; preserve its cursor.
+      state.done = reply.more === false;
+    }
     const pending = new Map(state.played.map(track => [track.id, track]));
     for (const track of tracks) {
       pending.delete(track.id);
@@ -254,18 +264,46 @@ async function nextFeed(id) {
 
 export async function stations() {
   const modes = (await music("modes")).result;
-  return [recommendationStation(), ...modes.map(modeStation)];
+  return [recommendationStation(), ...modes.filter(mode => mode.id === "preference:familiar" || mode.id === "preference:fresh").map(modeStation)];
 }
 export async function stationNext({ id }) { return nextFeed(id); }
+
+function discoveryResult(reply) {
+  const result = reply.result;
+  if (reply.more && reply.discovery) {
+    while (discoveryPages.size >= 100) discoveryPages.delete(discoveryPages.keys().next().value);
+    const page = `listening-modes:more:${++browseSequence}`;
+    discoveryPages.set(page, { state: reply.discovery, result: null, pending: null });
+    const section = result.sections[result.sections.length - 1];
+    if (section) section.morePage = page;
+  }
+  return result;
+}
 export async function browse({ page }) {
-  if (typeof page === "string" && /^listening-modes(?::(?:focus|mood|activity|styles|voices|other):[1-9]\d{0,5})?$/.test(page)) {
-    return (await music("modePage", { page })).result;
+  if (page === "listening-modes" || page === "scene-modes") {
+    const attempt = generation;
+    const reply = await music("modePage", { page });
+    if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
+    return discoveryResult(reply);
+  }
+  if (typeof page === "string" && /^listening-modes:more:[1-9]\d{0,14}$/.test(page)) {
+    const saved = discoveryPages.get(page);
+    if (!saved) throw fail("unsupported", t("此探索页面已过期，请重新打开听歌模式。"));
+    if (saved.result) return saved.result;
+    if (!saved.pending) {
+      const attempt = generation;
+      saved.pending = music("discover", { state: saved.state }).then(reply => {
+        if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
+        saved.result = discoveryResult(reply);
+        return saved.result;
+      }).finally(() => { saved.pending = null; });
+    }
+    return saved.pending;
   }
   if (typeof page === "string" && /^recommendations(?::\d{1,15})?$/.test(page)) {
     const tracks = await nextFeed("recommendations");
-    return { title: "推荐", sections: [
-      { stations: [recommendationStation()] },
-      { tracks, links: [{ title: "换一批", page: `recommendations:${++browseSequence}` }] },
+    return { title: "推荐预览", subtitle: "在侧栏选择推荐，可持续听歌", sections: [
+      { title: "更多推荐歌曲", tracks, morePage: `recommendations:${++browseSequence}` },
     ] };
   }
   throw fail("unsupported", t("不支持此汽水页面。"));
