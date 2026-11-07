@@ -14,7 +14,7 @@ test('keeps every sidebar playlist and history when optional counts vary or are 
     [{ count_tracks: 0, resource_cnt: { track_cnt: 3 } }, 3],
     [{ count_tracks: 3, resource_cnt: { track_cnt: 0 } }, 3],
     [{ count_tracks: '0', resource_cnt: { track_cnt: '3' } }, 3],
-    [{ count_tracks: 2, resource_cnt: { track_cnt: 3 } }, undefined],
+    [{ count_tracks: 2, resource_cnt: { track_cnt: 3 } }, 2],
     [{ count_tracks: 'not-a-count' }, undefined],
     [{ count_tracks: -1 }, undefined],
     [{}, undefined],
@@ -39,8 +39,34 @@ test('opens zero-default count variants without weakening content completeness c
       await assert.rejects(new Catalog(session, { request: async () => body }).playlist('123'), { kind: 'response' })
     }
   }
-  for (const counts of [{ count_tracks: 2, resource_cnt: { track_cnt: 3 } }, { count_tracks: 'bad' }]) {
-    await assert.rejects(new Catalog(session, { request: async () => ({ playlist: { id: '123', title: 'Library', ...counts }, media_resources: [], has_more: false }) }).playlist('123'), { kind: 'response' })
+  await assert.rejects(new Catalog(session, { request: async () => ({ playlist: { id: '123', title: 'Library', count_tracks: 'bad' }, media_resources: [], has_more: false }) }).playlist('123'), { kind: 'response' })
+})
+
+// A real liked playlist returned valid songs and advancing cursors, but two positive counts differed and rejected every page.
+test('loads liked playlist pages with different positive metadata counts using legacy count precedence', async () => {
+  for (const counts of [
+    { count_tracks: 3, resource_cnt: { track_cnt: 5 } },
+    { count_tracks: 5, resource_cnt: { track_cnt: 3 } },
+    { count_tracks: '3', resource_cnt: { track_cnt: '5' } },
+  ]) {
+    const raw = { id: '123', title: 'Liked fixture', ...counts }
+    const cursors = []
+    const catalog = new Catalog(session, { request: async (_, path, { query }) => {
+      assert.equal(path, '/luna/pc/playlist/detail')
+      const cursor = query.get('cursor')
+      cursors.push(cursor)
+      return cursor === ''
+        ? { playlist: raw, media_resources: [resource('1'), resource('2')], has_more: true, next_cursor: 'opaque-liked' }
+        : { playlist: raw, media_resources: [resource('2'), resource('3')], has_more: false }
+    } })
+    const result = await catalog.playlist('123')
+    assert.deepEqual(result.tracks.map(t => t.id), ['1', '2', '3'])
+    assert.deepEqual(cursors, ['', 'opaque-liked'])
+    assert.equal(result.trackCount, Number(counts.count_tracks))
+    const missing = new Catalog(session, { request: async () => ({ playlist: raw, has_more: false }) })
+    await assert.rejects(missing.playlist('123'), { kind: 'response' })
+    const incomplete = new Catalog(session, { request: async () => ({ playlist: raw, media_resources: [resource('1')] }) })
+    await assert.rejects(incomplete.playlist('123'), { kind: 'response' })
   }
 })
 
@@ -118,6 +144,32 @@ test('rejects missing resources unless the first page is explicitly empty and te
   for (const media_resources of [{}, '', false, 0]) {
     const catalog = new Catalog(session, { request: async () => ({ playlist: { id: '123', title: 'Empty', count_tracks: 0 }, media_resources }) })
     await assert.rejects(catalog.playlist('123'), { kind: 'response' })
+  }
+})
+
+// The actual empty Douyin response omitted counts, resources and has_more but retained its identity and terminal zero cursor.
+test('accepts identified zero-cursor empty system lists without treating unknown details as empty', async () => {
+  for (const next_cursor of ['0', 0]) {
+    for (const resources of [{}, { media_resources: null }]) {
+      const raw = { id: '123', title: 'Empty system fixture', desc: 'Metadata retained', cover_url: 'https://example.invalid/empty.jpg' }
+      const catalog = new Catalog(session, { request: async () => ({ playlist: raw, next_cursor, ...resources }) })
+      const result = await catalog.playlist('123')
+      assert.equal(result.id, raw.id)
+      assert.equal(result.name, raw.title)
+      assert.equal(result.imageUrl, raw.cover_url)
+      assert.equal(result.description, raw.desc)
+      assert.deepEqual(result.tracks, [])
+    }
+  }
+  for (const response of [
+    { playlist: { id: '123', title: 'Unknown' } },
+    { playlist: { id: '123', title: 'Unknown' }, next_cursor: '' },
+    { playlist: { id: '456', title: 'Other' }, next_cursor: '0' },
+    { playlist: { id: '123', title: 'Nonempty', count_tracks: 2 }, next_cursor: '0' },
+    { playlist: { id: '123', title: 'Advancing' }, next_cursor: 'next' },
+    { playlist: { id: '123', title: 'More' }, next_cursor: '0', has_more: true },
+  ]) {
+    await assert.rejects(new Catalog(session, { request: async () => response }).playlist('123'), { kind: 'response' })
   }
 })
 

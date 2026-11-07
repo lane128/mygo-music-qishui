@@ -304,7 +304,7 @@ test('recommendation previews and all-mode navigation remain reachable without a
   await s.api.signOut()
 })
 
-// A native more link owns a stable snapshot: concurrent refreshes coalesce and failures can retry the same upstream state.
+// Bottom pagination owns a stable snapshot: concurrent clicks coalesce and failures retry the same upstream state.
 test('coalesces exploration continuation and retries without skipping an exposure state', async () => {
   let finish
   const pending = new Promise(resolve => { finish = resolve })
@@ -313,8 +313,11 @@ test('coalesces exploration continuation and retries without skipping an exposur
   const end = { ok: true, result: { sections: [{ stations: [{ id: 'radio:44' }] }] }, more: false }
   const s = await sandbox([[root], [() => pending], [{ ok: false, error: 'network' }], [end]], session)
   const landing = await s.api.browse({ page: 'listening-modes' })
-  const route = landing.sections[0].morePage
+  const route = landing.sections.at(-1).links[0].page
   assert.match(route, /^listening-modes:more:\d+$/)
+  assert.equal(landing.sections[0].stations[0].id, 'radio:42')
+  assert.equal(landing.sections[0].morePage, undefined)
+  assert.equal(landing.sections.length, 2)
   const a = s.api.browse({ page: route }), b = s.api.browse({ page: route })
   while (s.calls.length < 2) await new Promise(resolve => setImmediate(resolve))
   assert.equal(s.calls.length, 2)
@@ -324,11 +327,17 @@ test('coalesces exploration continuation and retries without skipping an exposur
   assert.equal(first, same)
   assert.equal((await s.api.browse({ page: route })), first)
   assert.equal(s.calls.length, 2)
-  const more = first.sections[0].morePage
+  assert.equal(first.sections[0].stations[0].id, 'radio:43')
+  assert.equal(first.sections[0].morePage, undefined)
+  assert.equal(first.sections.length, 2)
+  const more = first.sections.at(-1).links[0].page
+  assert.notEqual(more, route)
   await assert.rejects(s.api.browse({ page: more }))
   const final = await s.api.browse({ page: more })
   assert.equal(final.sections[0].stations[0].id, 'radio:44')
   assert.equal(final.sections[0].morePage, undefined)
+  assert.equal(final.sections.length, 1)
+  assert.ok(final.sections.every(section => !section.links))
   assert.deepEqual(s.calls[2].params.state, s.calls[3].params.state)
   await s.api.signOut()
   await assert.rejects(s.api.browse({ page: route }), error => error.code === 'unsupported')
@@ -341,7 +350,7 @@ test('sign-out discards pending exploration pages and continuation tokens', asyn
   const frame = { ok: true, result: { sections: [{ stations: [{ id: 'radio:42' }] }] }, discovery: { exposure: ['42'] }, more: true }
   const s = await sandbox([[frame], [() => pending]], session)
   const first = await s.api.browse({ page: 'listening-modes' })
-  const route = first.sections[0].morePage
+  const route = first.sections.at(-1).links[0].page
   const loading = s.api.browse({ page: route })
   while (s.calls.length < 2) await new Promise(resolve => setImmediate(resolve))
   await s.api.signOut()

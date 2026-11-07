@@ -10,11 +10,21 @@ test('flattens common modes and retains all original scenes through a native sec
   const modes = [...common, ...Array.from({ length: 45 }, (_, i) => mode(i, `模式 ${i}`))]
   modes.at(-1).id = 'scene:9223372036854775807'
   const landing = scenePage(modes)
-  assert.deepEqual(landing.sections[0].stations.map(s => s.id), modes.slice(0, 2).map(s => s.id))
+  assert.deepEqual(landing.sections[0].stations.map(s => s.id), modes.slice(0, 8).map(s => s.id))
   assert.ok(landing.sections.every(section => !section.links))
   const all = scenePage(modes, landing.sections[0].morePage)
   assert.deepEqual(all.sections[0].stations.map(s => s.id), modes.map(s => s.id))
   assert.equal(all.sections[0].stations.at(-1).imageUrl, modes.at(-1).imageUrl)
+})
+
+// The eight-mode preview must not expose a redundant full-list route when every mode already fits.
+test('keeps a short common-mode catalog complete without a redundant more link', () => {
+  for (const count of [1, 2, 7, 8]) {
+    const modes = [...common, ...Array.from({ length: 6 }, (_, i) => mode(i, `Mode ${i}`))].slice(0, count)
+    const section = scenePage(modes).sections[0]
+    assert.deepEqual(section.stations.map(s => s.id), modes.map(s => s.id))
+    assert.equal(section.morePage, undefined)
+  }
 })
 
 // Radio and playlist discovery cards retain their native playback semantics and official image URLs.

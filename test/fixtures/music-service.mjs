@@ -33,6 +33,7 @@ globalThis.fetch = async (url, options) => {
   }
   if (parsed.pathname === '/luna/pc/playlist/detail') {
     const playlistID = parsed.searchParams.get('playlist_id')
+    if (playlistID === 'empty-defaults') return json({ playlist: { id: playlistID, title: 'Empty fixture', desc: 'Empty description', cover_url: 'https://example.invalid/empty.jpg' }, next_cursor: '0' })
     if (playlistID === '124') return json({ has_more: false, next_cursor: 0 })
     if (playlistID === '125') return json({ playlist: { ...playlist, id: '125', count_tracks: '1' }, media_resources: [{ entity: { track } }], has_more: false, next_cursor: 0 })
     if (playlistID === 'empty-omitted' || playlistID === 'empty-null' || playlistID === 'empty-string-zero') return json({
@@ -41,7 +42,7 @@ globalThis.fetch = async (url, options) => {
       ...(playlistID === 'empty-null' ? { media_resources: null } : {}),
       has_more: false,
     })
-    return json({ playlist, media_resources: [{ type: 'track', entity: { track_wrapper: { track } } }], has_more: false })
+    return json({ playlist: { ...playlist, resource_cnt: { track_cnt: 2 } }, media_resources: [{ type: 'track', entity: { track_wrapper: { track } } }], has_more: false })
   }
   if (parsed.pathname === '/luna/search/track') return json({ result_groups: [{ data: [{ entity: { track } }], has_more: false }] })
   if (parsed.pathname === '/luna/pc/feed/mode') {
@@ -49,7 +50,7 @@ globalThis.fetch = async (url, options) => {
     assert.ok(options.headers['x-medusa'])
     assert.equal(options.method, 'POST')
     assert.deepEqual(JSON.parse(options.body), {})
-    return json({ feed_mode_block: [{ title: '心情', feed_mode: [{ type: 'scene_mode', text: 'Fixture Mode', entity: { feed_scene_mode: { scene_mode_id: 0 } } }] }] })
+    return json({ feed_mode_block: [{ title: '心情', feed_mode: Array.from({ length: 9 }, (_, i) => ({ type: 'scene_mode', text: `Fixture Mode ${i}`, entity: { feed_scene_mode: { scene_mode_id: i } } })) }] })
   }
   if (parsed.pathname === '/luna/pc/discover' || parsed.pathname === '/luna/pc/discover/mix') {
     assert.ok(options.headers['x-helios'])

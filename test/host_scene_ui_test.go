@@ -84,27 +84,49 @@ func TestQishui105NativeFrames(t *testing.T) {
 				theme = "dark"
 			}
 			saveFrame(t, dir, view.file+"-"+theme+".png", tt.Image())
+			if view.id == "listening-modes" {
+				tt.Scroll(800, 400, 0, 100000)
+				settled(tt)
+				saveFrame(t, dir, view.file+"-bottom-"+theme+".png", tt.Image())
+			}
 		}
 	}
 }
 
-// Native more-page navigation retains back/forward caching and dispatches the exact discovered radio ID when a photo is clicked.
+// Clicking the bottom exploration link loads the next batch, retains back/forward caching and preserves the discovered radio ID.
 func TestQishui105DiscoveryNavigation(t *testing.T) {
 	fixture := loadQishuiSceneFixtures(t)
 	a := qishuiSceneApp(t, fixture)
 	ch := posts(a)
 	root := *fixture.Pages["listening-modes"]
 	root.Sections = root.Sections[1:]
-	a.browses = map[string]*browseData{"listening-modes": {page: &root}}
+	a.browses = map[string]*browseData{}
 	a.route = route{page: pageBrowse, src: "fake", id: "listening-modes"}
 	asked := make(chan string, 8)
-	fake(a).browse = func(page string) (*music.Browse, error) { asked <- page; return fixture.Pages[page], nil }
+	fake(a).browse = func(page string) (*music.Browse, error) {
+		asked <- page
+		if page == "listening-modes" {
+			return &root, nil
+		}
+		return fixture.Pages[page], nil
+	}
+	// Loading through the host also initializes freshness metadata in MyGO 0.1.20.
+	a.loadBrowse(a.library, "listening-modes", false)
+	if page := wait(t, asked, "initial discovery page"); page != "listening-modes" {
+		t.Fatal("initial discovery opened a different page")
+	}
+	runPost(t, ch)
 	tt := ui.NewTester(a.view, 1200, 900)
 	settled(tt)
-	if err := tt.Click("See All"); err != nil {
+	tt.Scroll(800, 400, 0, 100000)
+	settled(tt)
+	if len(asked) != 0 {
+		t.Fatal("scrolling must not fetch without clicking the manual continuation")
+	}
+	if err := tt.Click(root.Sections[len(root.Sections)-1].Links[0].Title); err != nil {
 		t.Fatal(err)
 	}
-	nextPage := root.Sections[0].MorePage
+	nextPage := root.Sections[len(root.Sections)-1].Links[0].Page
 	if page := wait(t, asked, "discovery continuation"); page != nextPage {
 		t.Fatal("continuation lost its plugin route")
 	}

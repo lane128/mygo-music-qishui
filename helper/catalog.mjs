@@ -119,14 +119,15 @@ function playlistCount(raw, strict = true) {
     if (typeof value === 'string' && /^\d{1,16}$/.test(value)) value = Number(value)
     return Number.isSafeInteger(value) && value >= 0 ? value : undefined
   })
-  // The legacy count may be zero while resource_cnt supplies the real count,
-  // as in the reference client. Conflicting positive counts remain ambiguous.
-  const positive = counts.filter(value => value > 0)
-  if (counts.includes(undefined) || positive.some(value => value !== positive[0])) {
+  // These are independent metadata fields, not consistency checks. The PC
+  // client uses count_tracks; the reference client falls back to resource_cnt
+  // only for zero/missing legacy counts. Real liked playlists can have two
+  // different positive counts while returning valid, explicitly paged songs.
+  if (counts.includes(undefined)) {
     if (strict) throw error('response')
     return undefined
   }
-  return positive[0] ?? counts[0]
+  return counts.find(value => value > 0) ?? counts[0]
 }
 
 function paginationOf(result, cursor) {
@@ -204,7 +205,10 @@ export class Catalog {
     const count = playlistCount(raw)
     if (!Array.isArray(result.media_resources)) {
       const terminal = !page.more && (!page.cursor || page.cursor === '0' || page.cursor === cursor || result.has_more === false)
-      const confirmedEmpty = count === 0 || (count == null && result.has_more === false)
+      // The real empty Douyin system list omits zero-valued counts, repeated
+      // resources and has_more, but returns its identity and terminal cursor 0.
+      const identifiedZeroCursor = !cursor && result.playlist?.id != null && (result.next_cursor === 0 || result.next_cursor === '0')
+      const confirmedEmpty = count === 0 || (count == null && (result.has_more === false || identifiedZeroCursor))
       if (result.media_resources == null && terminal && (cursor || confirmedEmpty)) {
         return { playlist, tracks: [], ...page }
       }

@@ -156,14 +156,14 @@ for await (const line of readline.createInterface({input: process.stdin})) {
 		t.Fatalf("common station mapping failed: %v", err)
 	}
 	flat, err := p.Browse("listening-modes")
-	if err != nil || len(flat.Sections) != 2 || len(flat.Sections[1].Stations) != 1 || len(flat.Sections[1].Links) != 0 {
+	if err != nil || len(flat.Sections) != 3 || len(flat.Sections[1].Stations) != 1 || flat.Sections[1].MorePage != "" || len(flat.Sections[2].Links) != 1 {
 		t.Fatalf("flat discovery landing failed: %v", err)
 	}
 	all, err := p.Browse(flat.Sections[0].MorePage)
 	if err != nil || len(all.Sections) != 1 || all.Sections[0].Stations[0].ID != "scene:0" {
 		t.Fatalf("all-mode navigation lost its playable station: %v", err)
 	}
-	nextPage, err := p.Browse(flat.Sections[1].MorePage)
+	nextPage, err := p.Browse(flat.Sections[2].Links[0].Page)
 	if err != nil || nextPage.Sections[0].Stations[0].ID != "radio:43" || nextPage.Sections[0].MorePage != "" {
 		t.Fatalf("native discovery continuation failed: %v", err)
 	}

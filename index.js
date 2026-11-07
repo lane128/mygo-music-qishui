@@ -274,8 +274,9 @@ function discoveryResult(reply) {
     while (discoveryPages.size >= 100) discoveryPages.delete(discoveryPages.keys().next().value);
     const page = `listening-modes:more:${++browseSequence}`;
     discoveryPages.set(page, { state: reply.discovery, result: null, pending: null });
-    const section = result.sections[result.sections.length - 1];
-    if (section) section.morePage = page;
+    // MyGO renders Links after the content and owns their card appearance.
+    // A separate trailing section keeps this manual pagination out of the header.
+    result.sections.push({ links: [{ title: t("换一批"), subtitle: t("查看另一批探索内容"), page }] });
   }
   return result;
 }
