@@ -1,6 +1,142 @@
 # 验证记录
 
-日期：2026-11-07。1.0.7 本机测试环境：macOS arm64、Node.js 24.15.0、Chrome 156.0.8078.81、Playwright Core 1.65.0。
+日期：2026-11-08。本轮本机环境：macOS arm64、Node.js 24.15.0、Go 1.27.3；没有可用的 Windows 执行环境。当前版本为 1.0.8。以下标为“未发布”的小节保留的是合入 1.0.8 前的阶段记录，其中的旧版本号、候选包路径和“没有发布”描述仅适用于当时；当前运行方式以 README 和本节为准。历史浏览器验证使用的 Chrome、Playwright 不属于 1.0.8 运行依赖。
+
+## 1.0.8 发布验证
+
+- `plugin.json`、`package.json` 与锁文件的两个项目版本统一为 **1.0.8**，最低宿主为 **MyGO 0.1.20**。README 按安装、升级、版本变化、功能边界与开发验证重新组织，不再将当前版本描述成未发布的 1.0.7 开发包。
+- 版本更新后的完整源码回归：JavaScript **186 项，183 通过、0 失败、3 跳过**，Go 单元测试通过；Go race 检查通过，npm 依赖审计零漏洞。三个 JavaScript 跳过项为旧 Node 裁剪对照、旧 Node SDK 对照与 Windows 原生执行；实际原生签名有独立的 Go/C++/官方 SDK 检查覆盖。
+- 本次汇总已完成的沙箱登录与目录迁移、原生程序替代 Node、运行/验证分包、Windows 音频组件精简、历史详情首曲封面、成功播放历史上报和歌手主页。各阶段真实 SDK、音频精度、宿主全量与界面交互结果见后续小节；最新歌手原生点击测试连续 5 次通过，真实公开歌手资料读取成功且不发送账号 Cookie 或签名。
+- 正式 Release 只提供 macOS arm64 与 Windows amd64 的运行 ZIP，附件名称遵循 `plugin-{GOOS}-{GOARCH}.zip`。MyGO 0.1.20 根据系统与架构选择首个匹配 ZIP，不排除 `-validation.zip`；验证 ZIP 仅供本地开发，避免自动安装选错附件。源码归档不代替含原生组件的运行 ZIP。
+- 发布检查入口：最终四包布局、源码与生成入口一致性、运行/验证包生产文件一致性、Windows 静态检查；使用真实 MyGO 源码运行 `go test ./internal/... -count=1`，最终 macOS 包运行独立原生测试与 IPC 回归。发布后再启用 `test/host_release_test.go`，通过匿名 GitHub 最新 Release 发现、版本比较、下载 SHA-256 与安装来源检查验证公开安装链路。发布过程的最终日志和附件摘要保存在本地 `dist/release-1.0.8-*` 报告中。
+- **验收边界**：Windows 包为实验性支持，尚未在 Windows 实机执行签名、AppContainer/Job/ACL 清理和音频转换；真实手机扫码确认、账号获准播放、设备出声、官方历史实际入库与 macOS 下载后 Gatekeeper 行为仍需人工验收。自动化不读取私人账号，不修改已安装 App 或参考项目。
+- 回滚：macOS 可移除插件后导入 v1.0.7 的完整运行 ZIP，保留插件数据；旧版登录仍依赖浏览器。Windows 没有此前正式运行包，出现问题应暂停使用实验包。源码可 revert 本次发布提交。
+
+## 点击歌手名打开原生主页（未发布，2026-11-08）
+
+- 补齐 MyGO `artist({ id })` 能力。歌曲已有的 `artists[].id` 用于跳转，合唱分别保留 ID，同名歌手不按姓名猜测。主页使用官方 `artist_info` 的 ID、名称、HTTPS 头像与 `hot_tracks` 热门单曲；保留服务端顺序并去重，不把 MV 当歌曲，也不将热门单曲称作完整曲库。无歌手 ID 的署名仍由宿主显示为文字。
+- 静态核对官方 `GetArtistDetail`：GET `/luna/pc/artists/{artist_id}`，查询 `locate_item_id:''`，无正文；返回直接歌曲对象，官方对省略/null 的 `hot_tracks` 使用空数组。初版按拦截器走签名通道，实际 SDK 检查未取得歌手路径的签名；补充公开 HTTP 验证后改为固定公开 GET，不带 Cookie、不申请签名、不启动辅助程序，不以签名失败作为动态降级条件。
+- 最终目录映射对真实公开歌手林俊杰进行无账号读取：HTTP 200，ID 与请求一致，头像为 HTTPS，返回 5 首热门歌曲。没有读取账号存储、发送账号 Cookie 或签名、下载歌曲或记录原始响应；概要见 `dist/artist-public-check-20261108.json`。
+- 源码 JavaScript **186 项：183 通过、0 失败、3 跳过**，Go 回归通过。新增 6 组测试覆盖精确 int64 ID、头像、热门顺序与重复歌曲、合唱与同名歌手、空热门与缺头像、错误身份、畸形响应、限流/验证错误清理、路径注入、禁止正文/签名、无进程权限以及换号后迟到 HTTP 取消。Go 负控同时确认歌手 URL 不进入原生签名白名单。
+- 官方 MyGO 0.1.20 实际沙箱验证 `Artist` 能力、歌手资料、歌曲 source 标记及无进程权限读取。新的原生界面测试 `TestQishuiArtistNameNavigation` **连续 5 次通过**：点击正在播放页第二位歌手、从热门歌曲行再跳转、返回上一位歌手，且点击署名不会切换当前歌曲。测试初版等待任意一个主线程任务就检查页面，遇到无关任务导致空页面断言；已改为等待目标歌手页真正完成，不增加 sleep 或重试。
+- 独立 worktree 静态检查两轮，第二轮仅检查公开请求边界及其影响，未发现已确认缺陷。原生签名白名单扩展已撤回，原生运行组件保持此前版本；新增主页不引入 Node、图片资产、路径设置或账号修改能力。尚未实现歌手搜索、专辑页或关注功能。
+- 本轮为本地开发修改；最终包与安装检查结果见 `dist/artist-validation-20261108.json`。Windows 包仅交叉构建、静态与宿主安装器检查，未在 Windows 执行。验证时曾因复制 Windows 安装测试到另一个文件名产生重复声明，已仅移除本轮生成的重复文件、更新原来的测试入口后通过。未修改已安装 App、私人账号或参考项目，没有 commit、push 或发布。
+
+## 成功播放后追加汽水历史（未发布，2026-11-08）
+
+- 静态核对官方 3.7.0 客户端 `AppendRecentlyPlayedMedia`：`POST /luna/pc/me/recently-played-media`，JSON 仅含 `media: [{ type: 'track', id }]`，无收听时长门槛。协议来源、宿主触发条件与边界见 `PLAYBACK-HISTORY.md`；未执行官方 JavaScript 或读取私人账号。
+- 导出 MyGO 现有 `played({ id })`，由宿主成功开始播放后通知，包含缓存播放；预加载与仅取得播放地址不写历史。登录态、MD5、官方签名和 HTTP 继续走现有沙箱路径，不改宿主、原生可执行程序、权限或版本号。侧栏默认图标及零额外历史请求保持不变。
+- 上报仅记录开始播放，不伪造时长、完成率、收藏或推荐反馈。暂停/继续由宿主去重，重新播放可以再次追加。失败不关闭正在播放的音频，不自动重试；退出或换号取消签名及 HTTP，拒绝迟到结果，已经到达服务端的请求无法撤销。
+- 全量源码 JavaScript **180 项：177 通过、0 失败、3 跳过**，Go 回归通过。使用已有完整包、原生 FFmpeg 及 Windows PE 输入；跳过项为两项旧 Node 对照和 Windows 执行。新增 6 组回归涵盖精确 int64 ID、签名 POST/摘要/登录头、零值或省略状态码的确认响应、历史写入后重读及首曲封面、重复缓存播放、预加载零上报、非法 ID、限流/验证/HTTP/畸形响应、无重试、音频服务保留、退出和换号取消。
+- 官方 MyGO 0.1.20 实际沙箱通过 `TestQishuiPluginRuntime`、`TestQishuiPluginNetworkOnlyLogin`，新增真实宿主 `Played` 调用后读取变化历史的断言；最终 ZIP 的这两项及 macOS/Windows ZIP 安装器测试均通过。这里只替换远端服务和原生签名边界，不把模拟历史写入当作真实账号入库。
+- macOS 完整包实际 Go/C++/官方 SDK 的 JavaScript IPC **4 项全通过、无跳过**，增加历史 POST 的真实隔离签名调用；不向官方服务器发送请求，不输出签名材料。四包源码与生成入口一致，运行/验证包的生产文件一致，原生可执行程序与此前已验证版本逐字节相同。Windows 仅完成交叉构建、静态和实际宿主安装器检查，未在 Windows 执行。
+- 独立 worktree 只读审查未发现本轮已确认缺陷；补充了确认响应省略状态码的兼容覆盖。一次并行打包与源码检查同时改读生成入口，使 `--check` 读到重写中的文件而报告 stale；改为打包结束后顺序检查，全量回归通过，并逐字节核对四包生成入口，没有修改或放宽检查脚本。
+- 本地最终包和验证报告见 `dist/history-reporting-validation-20261108.json`。没有 commit、push、发布或替换已安装插件。**待人工验收**：真实账号在插件成功播放后，官方客户端的历史确实出现相应歌曲；真实设备出声及 Windows 原生执行。历史页面仍受宿主 30 秒缓存和重新进入页面的刷新时机约束，官方特殊队列的历史抑制也未由只含 ID 的宿主回调完整表达。
+
+## 历史播放首曲封面（未发布，2026-11-08）
+
+- 按用户确认的范围，仅历史详情页使用最新历史列表第一首歌曲的官方封面 URL。侧栏入口保持默认图标；加载个人歌单列表不读取历史、不启动辅助程序，打开详情后再正常读取完整历史。已撤回此前的侧栏预览、单条请求及其独立超时逻辑。
+- 保留首曲顺序，首曲缺图时不改用更早歌曲，不生成或打包图片；空历史或缺图时使用宿主默认显示。详情正常加载完整列表，不把第一首歌当作总数。
+- 全量源码 JavaScript 测试 **174 项：171 通过、0 失败、3 跳过**，Go 回归通过。覆盖侧栏零历史请求/零辅助程序、打开详情及刷新侧栏后仍无预览请求、详情首曲封面、完整列表、空历史、缺图/非 HTTPS URL、前置视频及不替换为更早歌曲封面。三个跳过项仍是旧 Node 两项对照和 Windows 实机执行，不涉及新封面路径。
+- 官方 MyGO 0.1.20 的真实沙箱集成测试验证侧栏无封面而详情使用首曲封面，未授权启动辅助程序的专门测试也通过。使用合成账号和历史响应，不读取真实账号或下载歌曲图片。本轮仍为本地开发修改，没有 commit、push 或发布；此前 `dist/history-cover-validation-20261108.json` 记录的是含侧栏预览的候选包，调整后的包见 `dist/history-detail-validation-20261108.json`。
+
+## 原生辅助程序替代 Node（未发布，2026-11-08）
+
+- 安装后不再运行或附带 Node。`index.js` 仍在 MyGO 沙箱执行；扫码、目录及播放授权 HTTP 均由宿主发送。Go 辅助程序承担授权音频下载、资源处理和本机 HTTP 服务；C++ 小型签名器加载未修改的官方 3.7.0 组件，只实现当前调用需要的 25 项 N-API 函数。开发构建与 JavaScript 测试继续使用 Node/npm，使用者不需要安装这些工具。
+- IPC 只发送版本和匿名设备/安装标识，不发送账号对象或整份会话 Cookie。签名所需请求头仅经过私有 stdin；授权资源来自沙箱当前账号的同次 `track_v2` 响应。下载不携带账号请求头，仅允许既有 HTTPS CDN 与验证过的委派跳转，并额外拒绝账号 API 域名。保持试听、会员、地区、音质与同次授权回退边界。
+- 新签名器 macOS **69,776 bytes**、Windows **214,016 bytes**。macOS 实际 SDK 调用通过：14 次禁网签名、27 组坏帧拒绝、缺组件/禁止读取组件负控、ASan/UBSan 边界测试；不输出签名材料。Windows 交叉构建核验 25 项导出、系统 DLL 依赖、ASLR/高熵 ASLR、DEP 和重定位，未执行 Windows 程序。
+- 源码完整入口 `npm test` 已纳入 Go 单元测试与实际原生进程 IPC。设置完整包与音频验证路径后，JavaScript **170 项：167 通过、0 失败、3 跳过**，Go 测试通过；跳过的是旧 Node 裁剪/旧 Node SDK 对照，以及 Windows 实机测试。新产品 SDK 已由实际 Go/C++ 调用单独覆盖。Go race、macOS/Windows vet、Windows worker/独立测试程序交叉构建通过；依赖审计零漏洞。
+- macOS 完整验证包的独立 Go 测试程序在 `PATH=/usr/bin:/bin` 下执行，**28 组顶层测试全部通过，无跳过**（含提供旧转换器的开发对照）。覆盖真实官方签名、隔离 CENC/AES-CTR 解码、六种 AAC 转 FLAC、坏资源拒绝、HTTP GET/HEAD/Range/416、Host/随机路径、TTL/内存上限、授权选择与回退、取消、EOF 关闭活动桥及阻塞 stdout。JavaScript 到实际包内 worker 的 4 项 IPC/签名测试也全部通过。
+- 六种转换保持帧数 **4800 / 47104 / 44100 / 51200 / 44100 / 51200**。当前包与独立 afconvert 参考的 24 位 PCM 最大差均为 **1**。P0、P1 和本轮转换器本身逐字节相同；搬到另一执行位置后，同一二进制 HE/HEv2 参考差分别为 8/3，因此旧/新比较改为顺序放在同一私有文件名、使用相同隔离策略，六种 PCM 差值均为 **0**。保留独立参考检查和原有已测容差，不修改生产转换器，不把不同执行位置的舍入差异当作迁移退化。
+- 官方 MyGO 0.1.20 隔离源码 `go test ./internal/... -count=1` 全部通过，包含真实 moejs、沙箱播放授权、账号生命周期、macOS ZIP 实际安装后原生签名，以及 Windows 运行/验证 ZIP 的真实安装器检查。七组原生界面点击、导航、播放副作用各 **5 次通过**。Windows 包安装检查没有执行 Windows 程序。
+- 独立 worktree 审查共三轮，后两轮仅检查修复及其影响。修复了期限到达后迟到成功响应仍被保留的竞态，并加入可控计时器回归。完整包首轮发现签名器为抑制 SDK 日志打开 `/dev/null` 被旧隔离策略拒绝；增加仅此字面路径的写入例外，实际 Seatbelt 测试确认私有目录读取、外部写入和本机网络仍被拒绝。签名测试 URL 也改为完整桌面格式。宿主首次全量检查因本次重复复制测试而编译失败，移除本次多出的文件后全量通过。无未解决的已确认审查问题。
+- 两平台继续分运行/验证 ZIP，均拒绝 Node 可执行文件；运行包不带图片、测试或旧 Node adapter。保留生产源码、构建配方、N-API 头文件许可、Go/Windows 依赖及静态 C++ 库完整许可、精简 FFmpeg 对应源码。两类包的运行文件逐字节一致，Windows `BUILD.json` 仅增加测试程序哈希。实际路径、体积、SHA-256 与 P1 对比见本地 `dist/native-validation-20261108.json`。
+- **待实机/人工验收**：Windows 加载、官方签名、AppContainer/Job/ACL/profile 清理与实际音频转换；macOS 真实下载隔离、公证/Gatekeeper 行为；手机确认、真实账号获准播放与设备出声。自动化仅使用合成账号、授权响应及音频夹具，不读取私人账号存储。没有修改已安装 App、参考项目或正式版本，没有 commit、push、tag 或发布。P1 四份回退 ZIP 哈希保持不变。
+
+复现：按 README 准备固定资产并构建两平台包。源码 `npm test`、`npm run test:native`；完整 macOS 验证设置 `QISHUI_NATIVE_ROOT=/absolute/extracted/validation`，执行 `test/native-worker.test -test.v -test.timeout=5m`，无需 Node 或 Go。可选开发对照另设 `QISHUI_BASELINE_CONVERTER=/absolute/old/audio-convert`。Windows 执行 `scripts/verify-windows.cmd`；其他系统通过开发 Node 执行 `scripts/verify-windows.mjs --check` 仅做静态检查。以下为历史阶段记录；当前运行依赖与入口以本节及 README 为准。
+
+## P1 依赖精简（未发布，2026-11-08）
+
+- Windows 从 Gyan 通用 FFmpeg 改为固定官方 8.1.2 源码、Zig 0.15.2 工具链构建的音频专用程序。可执行文件 **101,897,728 → 1,804,288 bytes**，保留 AAC-LC、HE-AAC、HE-AACv2、M4A/ADTS、FLAC、必要 PCM 与重采样；不含网络、视频编解码、设备或有损编码器。只允许 file/pipe，转换继续使用原有 128MiB 输出上限、超时、AppContainer 与 Job，不新增普通进程回退。
+- 固定源码、工具链和最终资产哈希；FFmpeg 完整对应源码（11,147,284 bytes）与 Windows CRT 源码/逐文件许可（6,326,380 bytes）、GPLv3、MinGW/Zig 许可和构建配方仍随包提供，因此整包收益小于可执行文件收益。工具链只在开发构建使用，安装后不下载依赖。直接用随包 `FFMPEG-SOURCE.tar.xz` 离线重建成功，全部 **8项资产逐字节一致**；另外两次独立 Windows 交叉构建的 EXE 也完全一致。
+- 实际 PE 仅导入 Windows 10/11 系统 DLL（Kernel32、Shell32、BCrypt、UCRT），没有另装的 codec DLL；ASLR、高熵 ASLR、DEP、重定位数据保留。静态检查入口会拒绝移除安全标志/重定位或注入外部 DLL 的负控。PE 检查与交叉构建不能证明 Windows 加载器、AppContainer 或转换在实机运行成功。
+- 新增5个无歌曲/账号的合成 AAC 夹具，与已有 LC 共6种 M4A/ADTS 组合。AudioToolbox 独立确认 HE/HEv2 的实际格式；同编解码配置的本机 FFmpeg 对6种夹具逐样本比较通过，转换保持参考解码样本数，最大 s32 差值255（小于一个24位量化步长256），HE 输出44.1kHz/HEv2双声道均保留。坏输入和网络协议拒绝通过。真实 Windows 验证包增加这6种 AppContainer 转换检查，尚未在 Windows 执行。
+- 专用转换器对比：macOS 现有 AudioToolbox 程序仅 **34,240 bytes**，6种夹具均通过独立系统解码比较，24位差值最多1，继续保留。AudioToolbox 与 FFmpeg 对 M4A 编码延迟/尾部 padding 的处理不同，比较分别以各自解码器为基准，不声明两平台 PCM 逐字节相同。Windows Media Foundation 官方 AAC 解码器支持 LC/HE/HEv2，但专用替代仍需处理 SBR/PS 的格式协商、浮点 PCM 转24位、FLAC输出及隔离兼容；本机无法执行 Windows 原型，本轮选择已有可验证配置的精简 FFmpeg。参考：[AAC Decoder](https://learn.microsoft.com/en-us/windows/win32/medfound/aac-decoder)、[Codec Objects](https://learn.microsoft.com/en-us/windows/win32/medfound/codecobjects)。没有把文档中未列出 FLAC 编码器解释为所有 Windows 都不支持 FLAC。
+- macOS Node 保留24.15.0，只裁剪副本的局部符号；原始可执行文件 **119,944,608 → 95,219,776 bytes**，32,898个导出符号、6项 entitlement 与 hardened runtime 选项全部保留。本地 ad hoc 重新签名后先通过严格签名检查才执行，并记录原始/派生哈希及来源；原发行者签名不再适用。包内 Node、官方原生签名、资源处理、沙箱与音频桥回归通过。Windows Node 保持未修改。MyGO 实际 ZIP 安装后签名调用通过；真实隔离下载/公证/Gatekeeper 行为仍未验收。
+- 去 Node 调查结论：官方插件是 N-API v8 原生组件；macOS 静态依赖25项 N-API 函数，直接替换需要正确的对象、回调、引用/清理及异常语义，以及工作进程的 HTTPS、授权资源处理、进程生命周期与本机 HTTP 服务。当前宿主未提供通用原生模块加载、AES-CTR和音频 HTTP 服务接口，不能直接把完整 helper 移入沙箱。small-ICU/no-inspector 的同版本自编译可后续测量，目前没有实际体积或兼容性结果，未采用，也没有降级 Node 或要求用户另装程序。
+- 源码全量测试 **166项：162通过、0失败、4跳过**；其中运行6种本机音频精度、实际 Node 签名/导出保留测试及 PE 负控。跳过3项需要完整包原生组件、1项只在 Windows 执行。完整 macOS 验证包用自带裁剪 Node、限制 PATH 且不设置外部工具路径执行 **156项：148通过、0失败、8跳过**；其中7项需 Windows/独立音频构建的 FFmpeg 检查、1项需真实 Windows AppContainer。7项 FFmpeg 检查已在源码验证中用同配置的本机音频构建另行通过。
+- 官方原版 MyGO 0.1.20 隔离源码 `go test ./internal/... -count=1` 全部通过，包括真实 moejs、网络夹具、macOS ZIP 安装后实际原生签名，以及 Windows 两类 ZIP 真正安装、AMD64组件、许可、完整源码和6种音频夹具存在。7组原生界面交互各 **5次通过**，P0 的无内置封面与官方 URL 策略保留。Windows ZIP 的安装检查没有执行 Windows 程序。
+- 两轮独立 worktree 审查：未发现确认缺陷；第二轮仅检查新集成与影响，另核对8项固定资产、实际 PE、CRT源码及许可。依赖审计零漏洞，Windows 目标 Go vet 通过，入口生成文件同步和归档排除负控通过。曾因 Zig 不接受 GNU 专用链接参数而构建失败，保留日志并改用零级 debug 配置避免 GNU ld 旧兼容分支；最终程序无 debug directory，安全标志及可复现结果如上。一次 Go vet 未指定 Windows 目标而报告无包，指定 GOOS/GOARCH 后通过。
+- 交付继续分运行/验证两类 ZIP。两类包运行文件逐字节相同，仅 Windows BUILD.json 增加测试程序哈希；运行包不含封面、测试或验证工具。实际包路径、大小、SHA-256及相对P0的变化见 `dist/p1-validation-20261108.json`，音频逐样本结果见 `dist/p1-audio-comparison-20261108.json`。ZIP 不写入自己的哈希。
+- **待实机/人工验收**：Windows SDK/加载、AppContainer、ACL/Job/profile 清理和精简 FFmpeg实际执行；macOS真实隔离下载/公证行为；手机确认、真实账号授权播放与设备出声。没有修改已安装App、私人账号存储或参考主项目，没有commit、push、tag或发布，正式版本仍为1.0.7；P0和更早回退ZIP全部保留。
+
+复现：按 README 开发步骤构建音频依赖、准备官方资产并打包；源码设置 `QISHUI_TEST_FFMPEG` 指向同配置本机验证构建、`QISHUI_TEST_FFMPEG_PE` 指向 Windows EXE、`QISHUI_NODE_SOURCE` 指向官方签名 Node 后运行 `npm test`。完整 macOS 验证包用自带 Node 设置 `QISHUI_TEST_NATIVE=1` 执行顶层测试；Windows 使用独立验证包的 `scripts/verify-windows.cmd`。以下为历史阶段记录，依赖构建与签名策略以本节为准。
+
+## P0 包体与图片调整（未发布，2026-11-07）
+
+- 移除47张内置听歌模式图、历史播放封面、图片清单、分类替换逻辑及3个图片生成脚本；不再解析插件目录为封面 file URL。模式、歌曲和歌单直接提供官方接口的 HTTPS 图片 URL，历史及接口缺图使用宿主默认显示。修复预置熟悉/新鲜模式条目曾挡掉服务端图片的问题；保留条目身份和名称，补上首次有效官方图片。
+- 每个平台同时构建运行 ZIP 和独立 `-validation.zip`。运行包保留 Node、签名/音频组件、许可、对应源码和构建输入，不含图片、测试目录、原生测试程序或验证工具。验证包包含相同运行文件，再加入测试、夹具和工具；可独立解压运行，无需先安装运行包。正式版本仍为1.0.7，这两类 ZIP 均为本地未发布候选。
+- 最终归档有自动排除检查，拒绝运行包中混入图片、测试程序、测试目录和验证入口。已通过注入图片/夹具/测试程序的负控验证拒绝有效。实际四份候选 ZIP 已验证运行/验证分离、许可和源码存在、Windows 五个运行组件与验证包第六个测试程序的 AMD64 架构及哈希，以及两类包运行文件逐字节一致（仅 Windows BUILD.json 增加验证程序校验值）。
+- 最终源码 `npm test`：**154项，150通过、0失败、4跳过**；其中3项需包内原生 SDK，1项只在 Windows 执行。`npm audit --omit=optional` 零漏洞，Windows Go 启动器交叉静态检查与生成入口同步检查通过。
+- 完整 macOS 验证 ZIP 在新目录解压，使用包内 Node、清空构建/浏览器路径变量并限制 PATH：**149项，148通过、0失败、1跳过**，仅 Windows AAC 集成跳过。实际执行 macOS 原生签名、授权解码、AAC 转换精度、worker 和音频服务回归；合成账号数据不代表真实账号验收。
+- 官方 MyGO0.1.20 隔离源码 `go test ./internal/... -count=1` 全部通过，直接使用 macOS 运行包验证真实 moejs、HTTP、签名与 ZIP 安装，并分别安装 Windows 运行/验证包。宿主新增断言：官方图片 URL 保留、缺图为空、运行包无图片和测试文件；Windows ZIP 检查仍未执行 Windows 程序。
+- 缺封面模式点击播放、探索换批/导航、推荐控制、首页导航、电台、歌单/空歌单及历史侧栏共7组原生交互连续 **5次通过**；新用例覆盖深浅主题下缺图模式仍按原 ID 播放。原生界面16张快照生成成功，已查看历史缺图的深浅主题截图。
+- 从此前保存的匿名官方模式响应中提取1个真实 CDN 图片 URL，重新下载原图到独立临时目录，验证返回 PNG，未放回仓库或 ZIP。将未修改原图交给宿主绘制并查看深浅主题：**官方白色透明图标在深色主题正常，在浅色主题几乎看不清**。这是原图直连的已知视觉限制，不算视觉全部通过；本次没有修改宿主、重新着色或内置图片。自动化导航和播放行为不受该图标对比度影响。
+- 当前候选的真实匿名二维码申请及主动取消预检通过，使用 MyGO 沙箱 HTTP，没有程序授权或会话保存。手机确认、真实账号目录和授权播放、音频设备出声仍未验收。
+- 独立 worktree 审查未发现确认的新缺陷，另行56项聚焦 Node 测试通过。其审查未执行 Windows、完整包或真实账号；最终排除检查由主线程新增负控并通过全量测试。审查 worktree 已清理。
+- **未完成项**：本机仍无 Windows 执行环境，因此 Windows SDK、AppContainer、Job/ACL/profile 清理、FFmpeg 和完整 Windows 运行回归尚待实机验证；手机确认与真实出声同样保留为待验收。运行包不含 Windows 验证入口，须解压 Windows `-validation.zip` 后运行 `scripts/verify-windows.cmd`，报告会明确标记真实账号/出声尚未验收。
+- 保留上一份 macOS/Windows 开发 ZIP 和更早 reviewed 回退包；会话格式与插件ID兼容。没有修改已安装App、私人存储或参考项目，没有commit、push或发布。最终大小、较P0前基线的变化、四份交付包路径和SHA-256记录在交付JSON，不把ZIP自身哈希写入ZIP。
+
+复现：`npm run build && npm test`；Mac设置 `QISHUI_NATIVE_DIR` 后 `npm run package`，Windows设置 `QISHUI_WINDOWS_ASSETS` 后 `npm run package -- --target windows-amd64`，每次输出两份包。Mac完整回归使用验证包内Node设置 `QISHUI_TEST_NATIVE=1` 后运行 `--experimental-vm-modules --test test/*.test.mjs`；Windows实机解压验证包运行 `scripts/verify-windows.cmd`。从源码/验证包执行 `scripts/verify-windows.mjs --check` 可静态检查两类Windows包，输出 `packageKind`。宿主另设置 `QISHUI_WINDOWS_VALIDATION_ZIP` 以检查验证包。以下各节为历史阶段记录，图片和包布局以本节为准。
+
+## Windows x64 适配（未发布，2026-11-07）
+
+- 新增 Windows 10/11 x64 开发测试包，内含 Node 24.15.0、官方汽水 Windows 3.7.0 的 `bdms.node`/`metasecml.dll`、FFmpeg 8.1.2、AppContainer 启动器及独立验证程序。使用者无需另装 Node、npm、Go 或 FFmpeg。保持纯插件无浏览器扫码、v1 会话和现有授权边界；未修改 MyGO 生产代码。
+- Windows 请求使用官方 Windows 客户端元数据；修复盘符、UNC、中文、空格、`#`、`%` 的插件资源 URL。实际生成的沙箱入口已覆盖这些路径、无程序权限的扫码/恢复/退出，以及 Windows 签名请求和包内 amd64 程序选择。
+- Windows AAC 使用包内 FFmpeg 转为 24 位 FLAC，不再次有损转为 MP3；这不会恢复 AAC 已丢失的信息。保留来源音质等级。原始 FLAC/MP3 仍按既有流程处理；不绕过试听、会员或地区限制。
+- 每次原生任务将程序和必要输入复制到新建私有临时目录。Go 启动器以无网络 capability 的 AppContainer 执行，程序创建时原子加入 guard Job，再加入执行 Job，限制额外子进程；仅继承受控标准流。账号数据只走 stdin，不放进参数、环境或日志。正常取消使用 `.cancel` 标记，等待 Job 结束并恢复 ACL、清理 profile；没有隔离失败后的普通进程回退。仅支持本地 NTFS ACL 临时目录。直接强杀启动器可由 Job 终止其子进程，但该次 profile 仍可能残留；Windows 实机行为尚未验证。
+- 固定下载地址、归档及提取文件的 SHA-256，并验证所有 Windows 二进制为 PE32+ AMD64。已用真实 Node ZIP、官方 SDK TGZ、FFmpeg ZIP 跑过完整校验提取和交叉打包；运行时不下载。首次打包发现 Homebrew 的 Go 许可证位于 GOROOT 上级，补充标准位置查找后成功。构建依赖 fflate 升至 0.8.3，最终 `npm audit --omit=optional` 为零漏洞。
+- 最终源码 `npm test`：**152 项，148 通过、0 失败、4 跳过**。跳过项为源码目录缺少正式原生 SDK 的3项，以及只在 Windows 执行的 AAC 集成测试。Windows 模拟测试实际覆盖签名输入隔离、资源解码、FLAC 参数、取消清理、setup 错误分类、坏输出及未支持架构拒绝。
+- 完整 macOS 包解压到独立目录、使用包内 Node、限制 PATH 并启用真实原生测试：**149 项，148 通过、0 失败、1 跳过**；仅 Windows 专用 AAC 集成跳过。真实 macOS 签名、资源解码、AAC 转换和 worker 音频服务均已执行。首轮完整包因模拟取消测试依赖文件系统通知而挂起，不计作通过；改为模拟真实启动器的标记轮询、关闭全部夹具计时器，并断言必须消费取消标记后，重新全量通过，没有放宽产品清理断言。
+- 官方 MyGO 0.1.20 隔离源码 `go test ./internal/... -count=1` 全部通过，包括真实 moejs 登录/目录、macOS ZIP 安装与原生签名。新增 Windows ZIP 测试使用真正 `Open`/`Install` 安装器，核验6个 AMD64 程序/组件、许可、封面和全部8种插件能力，并加载实际沙箱入口；**这个测试没有执行 Windows 程序**。
+- 最终交付检查另复现准备/验证脚本从目录别名运行时因入口路径比较而静默跳过：先加入真实 CLI 回归确认旧代码失败，再对入口路径做 realpath 归一化，同时修复两份脚本。此回归在修复后及源码全量中通过；不能将空输出、退出码0当作静态验证完成。
+- Windows 启动器和独立 Go 测试程序已交叉编译，`GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...` 通过。独立 worktree 只读审查未发现高置信度的新缺陷；它也没有运行 Windows 程序。任务 worktree 的源码已核对复制后清理。
+- 不生成 x32/386 包：当前官方 MyGO 没有 32 位 Windows 宿主，Windows 音频输出的编译条件仅覆盖 amd64/arm64，仅修改插件无法补齐。构建器对 `windows-386` 的实际负控已确认失败并给出宿主限制原因；Windows ARM64 官方签名组件也尚未适配。
+- **尚待 Windows 执行**：SDK 初始化及签名、AppContainer 文件/网络权限、真实 Job 生命周期与 ACL/profile 清理、包内 FFmpeg 转换及完整 Windows 回归。包内 `scripts/verify-windows.cmd` 使用随包运行时执行这些检查，并输出带组件哈希和结果的 `validation-windows-*.json`；不会读取私人账号。其他平台的 `--check` 仅静态检查，不算 Windows 功能通过。手机扫码确认、真实账号授权播放和音频设备出声还需人工验收。
+- 本轮没有改动已安装 App、插件存储或参考项目，没有 commit、push、tag 或发布；正式版本仍为 1.0.7。Windows 包仅供开发验收。macOS 如需回滚可重新导入保留的 `dist/plugin-darwin-arm64-catalog-sandbox-reviewed.zip`（SHA-256：`5ee6946be9cabb5ecf675060a8398ee16f53cf21a1b0069473ee1b62575c1521`）。最终交付 ZIP 的路径、大小及校验值另随本地交付报告提供，避免在 ZIP 内记录其自身哈希。
+
+复现：`npm test`；`npm run prepare:windows -- /absolute/new/empty/assets`；`QISHUI_WINDOWS_ASSETS=/absolute/assets npm run package -- --target windows-amd64`。在 Windows x64 解压完整包后运行 `scripts/verify-windows.cmd`；在其他平台用 `node scripts/verify-windows.mjs --check /absolute/extracted/package` 做静态检查。宿主将 `test/host_integration_test.go`、`test/host_release_test.go`、`test/host_windows_package_test.go` 复制到隔离源码 `internal/plugin`，设置 `QISHUI_PLUGIN_DIR`、`QISHUI_PLUGIN_ZIP`、`QISHUI_WINDOWS_PLUGIN_ZIP` 后运行 `go test ./internal/... -count=1`。
+
+## 目录功能迁入沙箱（未发布，2026-11-07）
+
+- 全部目录请求、结果映射、歌单分页、搜索游标、首页探索、听歌模式、推荐、电台、历史与歌词逻辑迁入 MyGO 沙箱。普通歌单、歌单列表、搜索和公开歌词不启动程序；既有需签名接口仍保留原生签名策略，只将 URL/请求头交给包内签名辅助进程，HTTP 请求由宿主发送。播放授权、授权资源处理、AAC 转换及本机音频服务继续使用原组件，没有改变试听/VIP/地区授权边界。
+- `src/plugin.mjs` 与共享模块经仅开发使用的 esbuild 构建为独立 `index.js`；宿主入口没有 Node 模块或外部导入。安装包不含 esbuild 二进制。`npm run check`/`npm test` 检查源码与入口同步；已故意修改生成入口验证检查确实失败，再重新构建恢复并检查通过。打包前也会重新构建。
+- 统一使用宿主 MD5、AbortController、getReader 有界读流与 UTF-8 字节计数。目录总预算24秒，每次网络请求20秒，历史保留8MiB上限，其余目录1MiB；禁止自动跳转，账号 Cookie 只进入固定汽水 API，公开歌词不接收 Cookie 或签名。歌词域 `beta-luna.douyin.com` 加入网络权限。旧会话先按 Domain/Path/过期规则归一化；保留 v1 存储与原会员昵称前缀。
+- MyGO 没有 JSON.rawJSON，新增安全 JSON 数值序列化以保留 int64 场景 ID；不以字符串占位符替换任意用户内容。真实 moejs 测试确认 `9223372036854775807` 以完整数值发送且未舍入。内置图片从宿主插件目录解析，覆盖含空格和 `#` 的路径，不读取外部文件。
+- 独立只读审查指出取消签名与退出清理重复调用 close 时，第二次调用可能提前返回。先用受控回归实际复现，再缓存同一关闭 Promise；同类检查另复现已生成签名的进程在关闭完成前从跟踪集合移除，改为关闭完成后移除，并让被淘汰音频辅助进程也跟踪至关闭完成。两种交错原先都失败，修复后均通过；扫码替换和旧会话失效的既有3项竞态回归也保持通过。
+- 首轮源码全量133项：130通过、0失败、3项因源码目录没有原生组件跳过。补充字节上限、超时、int64、晚到签名、关闭等待等回归后，最终候选完整ZIP在全新目录解压，用包内Node、真实原生签名组件与转换器，清除浏览器/SDK路径变量并限制PATH：**139项全部通过，0失败、0取消、0跳过**。覆盖登录/恢复/退出、歌单及空歌单、搜索分页、推荐续歌与反馈、听歌模式、探索翻批、电台、历史、歌词、播放授权/试听拒绝、授权解码、AAC转换精度、音频GET/HEAD/Range与关闭清理。包内原生签名测试首轮使用缺少生产元数据的简化请求而失败，改为由实际 requestJSON 生成完整签名输入后通过，没有放宽签名或权限断言。
+- 官方 MyGO0.1.20隔离源码 `go test ./internal/... -count=1` 全部通过。真实 moejs 集成仅替换远端 HTTP 与原生签名/音频服务边界，目录数据处理使用实际生成入口；保持首页15卡片、全部模式、推荐反馈、历史来源、歌词、会话恢复与隔离、退出等断言。ZIP安装和真实原生签名也通过。专门网络测试仅复制入口与清单、删除process权限且没有bin/helper文件，仍完成扫码、恢复、普通歌单列表/详情/空歌单、搜索及歌词；需签名首页正确报告缺少程序能力。
+- `scripts/host-ui-fixture.mjs` 从实际入口和合成远端JSON生成原生界面测试数据，无网络、真实账号或已安装App访问。首页导航、图片电台、歌单/空歌单、底部换批与前进后退缓存、推荐开始/切换、历史侧栏等6组原生交互测试连续**5次通过**。首轮两首歌的夹具触发宿主正常后台补歌，使切换断言读到旧预取请求；核对宿主两首阈值后，将该点击夹具调整为四首歌，保留独立续歌回归，未改宿主或产品行为。该夹具使用本地测试图片，不代表本轮重新验收公开照片或真实账号数据。
+- 当前生成入口的真实匿名二维码申请及主动取消预检通过，无程序授权、没有保存会话；没有重复手机确认、真实私人目录/播放验收或完整重启已安装App。自动化的合成接口全程不等同于这些人工账号验收。
+- 体积对比基线为上一份纯插件扫码修正版：ZIP **47,684,441字节**，解压 **134,978,032字节**。通过139项测试的候选ZIP为 **47,717,697字节**（约45.507MiB），增加 **33,256字节**（约32.5KiB），解压 **135,087,094字节**。Node本体 **119,944,608字节** 与原生播放组件仍保留，所以本轮没有实现明显瘦包；收益是无签名目录操作不再启动Node、目录HTTP与映射统一由宿主执行。最终交付补充本记录和界面夹具生成器后的精确体积及SHA-256见交付结果，运行代码与已验证候选保持一致。
+- 验证候选：`dist/plugin-darwin-arm64-1.0.7-1794043215066.zip`。未修改已安装MyGO、插件私人存储或参考项目；未commit、push、tag或发布，版本仍为1.0.7。回滚可重新导入上一份 `plugin-darwin-arm64-pure-login-reviewed.zip`；会话格式兼容。以下为历史阶段记录，依赖说明以本节及当前README为准。
+
+复现入口：`npm run build && npm test`；完整包用包内Node显式设置 `QISHUI_TEST_NATIVE=1` 运行 `--experimental-vm-modules --test test/*.test.mjs`。宿主复制 `test/host_integration_test.go` 到 `internal/plugin`，设置 `QISHUI_PLUGIN_DIR`/`QISHUI_PLUGIN_ZIP` 后运行全部内部测试。原生交互夹具：`node --experimental-vm-modules scripts/host-ui-fixture.mjs /new/empty/directory`，设置 `QISHUI_SCENE_FIXTURE=/new/empty/directory/fixture.json`，运行 `go test ./internal/app -run '^TestQishui(105DiscoveryNavigation|105RecommendationControls|HomeDiscoveryNavigation|HomeRadioAction|HomePlaylistActions|HistorySidebarActions)$' -count=5`。
+
+## 纯插件扫码迁移（未发布）
+
+- 将扫码申请、轮询、确认后的账号校验、账号恢复和退出清理迁入独立的 `index.js` 沙箱入口，使用宿主 fetch、Headers.getSetCookie、MD5 和 storage；不调用 Node、浏览器或 host.webSignIn。不保留浏览器登录回退。
+- 保持插件 ID、v1 会话与会员昵称前缀，兼容旧浏览器 Cookie 的 Domain/Path 和 `expires=-1`。每次扫码使用全新 Cookie jar；必须服务端明确 confirmed、存在本次有效会话且 `/luna/pc/me` 返回合法账号后才保存。失败替换不覆盖旧会话；取消、换号和退出中止请求与轮询，旧结果不覆盖新账号。
+- Cookie 按官方域、HostOnly、Path、过期和删除语义处理；仅保存适用于 API 根路径的 Cookie 给现有音乐 worker。HTTPS 完成重定向逐跳检查，最多6跳；Passport 请求拒绝自动跳转；每次请求20秒、响应1MiB字节上限，二维码本地有效期210秒。限流、额外验证和未知状态正常停止，不绕过或高频自动重试。
+- 设备 ID、UUID、trace 和匿名 msToken 占位值仅为非秘密客户端元数据；有 Web Crypto 时优先使用，没有时采用普通随机数生成兼容格式。它们不作为认证凭据或密码学随机源。真正的二维码 token、会话 Cookie 仅由服务端 HTTPS 响应提供；不生成本地认证秘密，不把普通随机数称为安全随机数。
+- MyGO 最低版本调整为已验证的0.1.20，新增汽水主域/子域网络权限。音乐请求、原生签名、授权解码、AAC转换与本机音频服务仍保留包内Node和程序权限。移除被替代的浏览器 helper、Playwright依赖、网页登录SDK与其打包要求；不修改宿主生产代码。
+- 迁移后的首轮JavaScript源码测试127项，其中124通过，3项因源码不含打包的原生组件而跳过。随后增加受控时钟的请求超时/二维码到期、流式响应中途取消和3项登录提交/旧会话失效交错回归，最终修正版完整测试ZIP在新目录解压，使用包内Node、真实原生组件和转换器，清空浏览器/SDK路径环境变量、限制PATH，并显式启用原生测试后：**132项全部通过，0失败，0跳过**。目录、推荐、模式、歌词、历史、播放授权和音频服务回归全部保留。
+- 官方MyGO0.1.20隔离源码 `go test ./internal/... -count=1` 全部通过，包括真实moejs网络栈中的合成扫码全程、关闭并重建插件后恢复、独立存储检查、退出及音乐worker互通、ZIP实际安装与原生签名。网络登录专门测试只复制入口/清单，没有bin/helper/浏览器资源，删除process权限后仍通过。
+- `MYGO_SOURCE_DIR=/absolute/path/to/mygo npm run preflight` 实际通过：正式迁移入口使用匿名设备元数据申请真实二维码后主动取消，没有授予程序权限、读取旧会话或输出二维码与凭据。预检是开发用Node脚本调用Go宿主测试，插件登录运行时不使用Node。
+- 此前隔离纯网络原型已由手机确认，实际完成新会话账号查询、关闭并重建插件实例后的再次查询、会话隔离和本地退出清理。**正式迁移代码本轮没有重复手机确认，也没有完整重启已安装App**；此处的自动全程成功用合成上游响应，不能代替最终测试ZIP的手机验收。
+- 独立只读审查发现2个可复现的并发缺陷：最终音频清理挂起期间，被替代的扫码曾提前保存会话；扫码期间查询旧失效账号曾误取消新扫码。先新增回归，原实现两项均失败，再将会话写入移至最后取消检查之后；旧账号失效推进请求代次并保留独立扫码上下文，使旧内容失效但新扫码继续。新增第三项覆盖最终清理期间旧账号失效，3项全部通过。修正后的完整132项测试及官方宿主全部内部测试再次通过。首次本地测试包在审查结束前交付，现已由带 `reviewed` 文件名的修正版替代；此前测试包不应继续用于验收。
+- 未修改已安装插件、App、参考项目或私人账号存储。版本仍为1.0.7，只交付本地开发测试包；未commit、push、打tag或发布。下面各版本段落及末尾人工验收项为历史记录，不能视为本次迁移的当前依赖说明。
+- 回滚：源码可恢复本次迁移前内容；安装测试包后可重新导入正式v1.0.7的完整ZIP，保留v1会话格式。网络策略和额外验证可能随服务端变化，测试包仍需用户实际扫码与账号界面验收。
 
 ## 1.0.7 发布验证
 

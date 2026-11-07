@@ -3,8 +3,10 @@ package app
 import (
 	"encoding/json"
 	"image"
+	"image/color"
 	"image/draw"
 	_ "image/jpeg"
+	_ "image/png"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,23 +47,33 @@ func qishuiSceneApp(t *testing.T, fixture qishuiSceneFixtures) *app {
 	fake(a).info.Navigation = []music.NavItem{{Title: "首页", Builtin: "home"}, {Title: "推荐", Builtin: "stations", Icon: "star"}, {Title: "听歌模式", Page: "listening-modes", Icon: "radio"}}
 	a.stations, a.stationsOnce = fixture.Stations, true
 	for url, name := range fixture.Covers {
-		f, err := os.Open(filepath.Join(filepath.Dir(os.Getenv("QISHUI_SCENE_FIXTURE")), name))
-		if err != nil {
-			t.Fatal(err)
+		// Offline checks use test pixels. Optional public-image checks read
+		// temporary downloads, never images from an installed plugin package.
+		var img image.Image = &image.Uniform{C: color.RGBA{R: 52, G: 103, B: 137, A: 255}}
+		bounds := image.Rect(0, 0, 320, 320)
+		if name != "" {
+			if filepath.Base(name) != name {
+				t.Fatal("fixture image must be in its temporary directory")
+			}
+			file, err := os.Open(filepath.Join(filepath.Dir(os.Getenv("QISHUI_SCENE_FIXTURE")), name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			img, _, err = image.Decode(file)
+			file.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			bounds = img.Bounds()
 		}
-		img, _, err := image.Decode(f)
-		f.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		bitmap := image.NewRGBA(img.Bounds())
-		draw.Draw(bitmap, bitmap.Bounds(), img, img.Bounds().Min, draw.Src)
+		bitmap := image.NewRGBA(bounds)
+		draw.Draw(bitmap, bitmap.Bounds(), img, bounds.Min, draw.Src)
 		giveCover(a, url, bitmap)
 	}
 	return a
 }
 
-// Native frames must show actual discovery photographs and the integrated stock radio, without modifying installed application data.
+// Native frames show remote-cover fixtures, missing-cover defaults and the stock radio without touching installed application data.
 func TestQishui105NativeFrames(t *testing.T) {
 	fixture := loadQishuiSceneFixtures(t)
 	dir := framesDir(t)
@@ -89,6 +101,41 @@ func TestQishui105NativeFrames(t *testing.T) {
 				settled(tt)
 				saveFrame(t, dir, view.file+"-bottom-"+theme+".png", tt.Image())
 			}
+		}
+	}
+}
+
+// A mode without a provider cover remains playable with the host default in either theme.
+func TestQishuiMissingCoverModeAction(t *testing.T) {
+	fixture := loadQishuiSceneFixtures(t)
+	for _, dark := range []bool{false, true} {
+		a := qishuiSceneApp(t, fixture)
+		ch := posts(a)
+		page := fixture.Pages["scene-modes"]
+		station := page.Sections[0].Stations[2]
+		if station.ImageURL != "" {
+			t.Fatal("fixture must include a scene without a cover")
+		}
+		a.browses = map[string]*browseData{"scene-modes": {page: page}}
+		a.route = route{page: pageBrowse, src: "fake", id: "scene-modes"}
+		asked := make(chan string, 8)
+		fake(a).stationNext = func(id string) ([]music.Track, error) {
+			asked <- id
+			return sourced(fixture.Tracks...), nil
+		}
+		tt := ui.NewTester(a.view, 1200, 900)
+		tt.SetDark(dark)
+		settled(tt)
+		if err := tt.Click(station.Name); err != nil {
+			t.Fatal(err)
+		}
+		if id := wait(t, asked, "mode without a cover"); id != station.ID {
+			t.Fatal("missing cover changed the requested station")
+		}
+		until(t, ch, func() bool { return a.pl.Radio() != "" })
+		_, id, _ := radioParts(a.pl.Radio())
+		if id != station.ID {
+			t.Fatal("missing cover changed the active radio")
 		}
 	}
 }

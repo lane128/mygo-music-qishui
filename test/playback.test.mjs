@@ -173,7 +173,7 @@ test('decodes a matching synthetic grant and rejects malformed containers', asyn
   invalid.writeUInt32BE(1, invalid.indexOf(Buffer.from('stco')) + 12)
   assert.throws(() => decodeWithKey(invalid, key))
   assert.throws(() => decodeWithKey(input.subarray(0, input.length - 1), key))
-  if (process.platform === 'darwin') assert.deepEqual(await decodeResource(input, syntheticAuth()), flac)
+  if (process.platform === 'darwin' || process.platform === 'win32' && process.env.QISHUI_TEST_WINDOWS === '1') assert.deepEqual(await decodeResource(input, syntheticAuth()), flac)
 })
 
 // The native subprocess can read only its executable from protected home, and cannot use network or persistent writes.
@@ -198,7 +198,7 @@ test('sandbox denies home reads, external writes and network access', { skip: pr
 })
 
 // Real SDK signing is opt-in and uses only fixed synthetic account data, with network denied.
-test('bundled official signer emits only the two allowed signature headers', { skip: process.platform !== 'darwin' || !process.env.QISHUI_TEST_NATIVE }, async () => {
+test('bundled official signer emits only the two allowed signature headers', { skip: !['darwin', 'win32'].includes(process.platform) || !process.env.QISHUI_TEST_NATIVE }, async () => {
   const signed = await signRequest({ url: 'https://api.qishui.com/luna/pc/track_v2?aid=386088&app_name=luna_pc&device_id=1234567890123456&fp=1234567890123456', headers: { 'User-Agent': 'LunaPC/3.7.0(452316191)', Cookie: 'sessionid=synthetic', 'X-SS-STUB': '99914B932BD37A50B983C5E7C90AE93B' }, did: '1234567890123456' })
   assert.deepEqual(Object.keys(signed).sort(), ['x-helios', 'x-medusa'])
   assert.ok(Object.values(signed).every(value => typeof value === 'string' && value && !/[\r\n\0]/.test(value)))

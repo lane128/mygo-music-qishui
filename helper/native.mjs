@@ -6,6 +6,9 @@ import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { pluginRoot } from './runtime.mjs'
 import { error } from './protocol.mjs'
+import { createWindowsNative } from './windows-native.mjs'
+
+const windows = createWindowsNative()
 
 const MAX_AUDIO = 128 * 1024 * 1024
 const signScript = `
@@ -98,6 +101,7 @@ async function isolated(operation) {
 }
 
 export async function signRequest({ url, headers, did, signal }) {
+  if (process.platform === 'win32') return windows.signRequest({ url, headers, did, signal }, signScript)
   return isolated(async root => {
     const node = await regular(process.execPath)
     const module = await regular(path.join(pluginRoot, 'runtime/native/bdms.node'))
@@ -116,6 +120,7 @@ export async function signRequest({ url, headers, did, signal }) {
 }
 
 export async function decodeResource(data, auth, { signal } = {}) {
+  if (process.platform === 'win32') return windows.decodeResource(data, auth, { signal })
   if (!Buffer.isBuffer(data) || data.length > MAX_AUDIO || typeof auth !== 'string' || auth.length > 4096) throw error('unavailable')
   return isolated(async root => {
     const node = await regular(process.execPath)
@@ -128,6 +133,7 @@ export async function decodeResource(data, auth, { signal } = {}) {
 }
 
 export async function convertAAC(data, { signal } = {}) {
+  if (process.platform === 'win32') return windows.convertAAC(data, { signal })
   if (!Buffer.isBuffer(data) || data.length > MAX_AUDIO) throw error('unavailable')
   return isolated(async root => {
     const converter = await regular(path.join(pluginRoot, 'runtime/native/audio-convert'))

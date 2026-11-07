@@ -1,8 +1,8 @@
 {
   "id": "qishui-app-login",
   "name": "汽水音乐",
-  "version": "1.0.7",
-  "minAppVersion": "0.1.8",
+  "version": "1.0.8",
+  "minAppVersion": "0.1.20",
   "main": "index.js",
   "playback": "stream",
   "navigation": [
@@ -10,5 +10,5 @@
     { "title": "推荐", "builtin": "stations", "icon": "star" },
     { "title": "听歌模式", "page": "listening-modes", "icon": "radio" }
   ],
-  "permissions": { "process": ["bin/node-*"] }
+  "permissions": { "network": ["qishui.com", "*.qishui.com", "beta-luna.douyin.com"], "process": ["bin/qishui-helper-*"] }
 }

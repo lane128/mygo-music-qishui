@@ -1,0 +1,14 @@
+{
+  "LIBCXX-LICENSE": {
+    "source": "Zig 0.15.2/lib/libcxx/LICENSE.TXT",
+    "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b"
+  },
+  "LIBCXXABI-LICENSE": {
+    "source": "Zig 0.15.2/lib/libcxxabi/LICENSE.TXT",
+    "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c"
+  },
+  "LIBUNWIND-LICENSE": {
+    "source": "Zig 0.15.2/lib/libunwind/LICENSE.TXT",
+    "sha256": "b5efebcaca80879234098e52d1725e6d9eb8fb96a19fce625d39184b705f7b6d"
+  }
+}

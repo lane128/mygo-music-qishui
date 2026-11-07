@@ -1,0 +1,128 @@
+Windows amd64 AppContainer runner
+
+This directory is a standalone Go module. Build with Go >=1.26 (required by
+pinned golang.org/x/sys v0.48.0). The executable needs only Windows system DLLs;
+it does not need Go, PowerShell, a globally installed Node, or administrator rights
+at runtime. Windows 10/11 amd64 are the intended acceptance targets.
+
+Protocol
+
+  windows-runner.exe --root <absolute-private-staging-directory> \
+    --parent <calling-Node-PID> --timeout-ms <1..22000> -- <absolute.exe> [args...]
+
+The JS caller creates a NEW private directory for each invocation, copies the
+Node+SDK or FFmpeg runtime and all inputs into it, and removes it after the runner
+exits. Never pass an existing plugin directory, HOME, or another shared directory.
+The runner rejects drive roots, HOME and its ancestors, Windows directory trees,
+UNC/device paths, reparse points (including ancestors), hard-linked staged files,
+and executables outside root. Use a local NTFS directory supporting Windows ACLs.
+Other processes owned by the same user must not concurrently mutate this staging
+tree. This launcher isolates the payload, not other code running as that user.
+
+The child receives stdin and stdout directly through an explicit three-handle
+inheritance allowlist. Its stderr goes to NUL. Stdin EOF completes the input; it
+DOES NOT cancel execution. Arguments must contain only staged paths and fixed
+code/parameters, never account credentials. Read stdout while the child runs to
+avoid filling its pipe. The child's working directory is root.
+
+The child environment contains only:
+
+  APPDATA, LOCALAPPDATA, TEMP, TMP, USERPROFILE = root
+  PATH = Windows System32
+  SystemRoot = Windows installation directory
+
+No NODE_OPTIONS, account environment, user PATH, or DLL search paths are copied.
+
+Cancellation and statuses
+
+The caller cancels by creating root/.cancel. The runner checks every <=50 ms
+while waiting for the child, closes the Job, waits for termination, restores
+security descriptors, and deletes the AppContainer profile. The JS caller should
+wait for this cleanup; it can kill the launcher only as a last-resort fallback.
+The timeout starts before sandbox setup, and the remaining budget is checked
+before the suspended child is resumed. Preparation/cleanup perform synchronous
+Windows calls and are not guaranteed to finish inside that execution budget.
+
+Exit status:
+
+  child status  child finished normally (forwarded without translation)
+  124           launcher deadline exceeded
+  125           bad request, parent exited, isolation/setup/wait/cleanup failure
+  130           root/.cancel requested cancellation
+
+A child can itself return these same values. Launcher diagnostics on stderr are
+fixed strings without arguments, paths, usernames, OS errors, or child stderr.
+
+Isolation and lifecycle
+
+Each run creates a cryptographically unique AppContainer profile with ZERO
+capabilities, including no internet/private-network capabilities. There is no
+ordinary-process fallback. Windows system resources exposed to AppContainers
+remain accessible; the intended boundary is private user data and write access,
+not complete invisibility of every filesystem object outside root.
+
+Only the staged tree receives the profile SID: read/write/execute/delete access,
+without WRITE_DAC or WRITE_OWNER. Its DACLs are temporarily protected and limited
+to the launching user, SYSTEM, and that profile SID. Low mandatory-integrity
+labels allow the low-integrity child to create outputs. Existing DACLs and labels
+are restored after the child terminates; originally implicit medium labels may
+be restored as explicit medium labels. New output objects lose the per-run SID
+and receive a private user/SYSTEM DACL and medium label. Cleanup does not delete
+payload files; deleting the task's staging directory is the caller's job.
+
+CreateProcess uses SECURITY_CAPABILITIES and CREATE_SUSPENDED. Windows 10+ atomic
+PROC_THREAD_ATTRIBUTE_JOB_LIST puts the child into a guard Job during creation,
+closing the launcher-crash window before explicit assignment. The runner then
+calls AssignProcessToJobObject to place the still-suspended child into a nested
+execution Job, and resumes its thread. BOTH Jobs use KILL_ON_JOB_CLOSE and
+ActiveProcessLimit=1; neither permits breakaway. The child cannot create another
+process. Unsupported atomic membership fails closed, without fallback.
+
+A held parent-process handle avoids PID reuse during monitoring. Parent exit,
+timeout, or cancellation close both Jobs and wait for the child before ACL/profile
+cleanup. Job and parent handles are never inherited. Abnormal launcher termination
+also closes the last Job handles, so Windows kills the child even if the launcher
+was killed before the explicit Assign call. A forcibly terminated launcher cannot
+execute ACL/profile cleanup, so its private staging tree and unique profile may
+remain; prefer .cancel and allow normal cleanup.
+
+Build and checks
+
+The runtime ZIP retains the runner source and module locks. Test sources and
+prebuilt integration tests are included only in the separate -validation.zip
+(or the source repository). Use either of those when running the test commands.
+
+From this directory on macOS/Linux, use fresh output paths:
+
+  out=$(mktemp -d /tmp/qishui-windows-runner.XXXXXX)
+  GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o "$out/windows-runner.exe" .
+  GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -c -o "$out/integration.test.exe" ./tests
+  GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...
+
+These are cross-compilation/static checks, NOT a Windows sandbox execution test.
+
+On Windows amd64, with a freshly created output directory (cmd.exe syntax):
+
+  go build -o "%RUNNER_TEST_OUT%\windows-runner.exe" .
+  go test -c -o "%RUNNER_TEST_OUT%\integration.test.exe" ./tests
+  set QISHUI_WINDOWS_RUNNER=%RUNNER_TEST_OUT%\windows-runner.exe
+  set QISHUI_TEST_WINDOWS=1
+  "%RUNNER_TEST_OUT%\integration.test.exe" -test.v -test.timeout=120s
+
+Set RUNNER_TEST_OUT to an unused directory before these commands. Alternatively,
+set the same two QISHUI variables and run go test -v -timeout 120s ./tests.
+Without QISHUI_TEST_WINDOWS=1, real Windows integration tests skip.
+
+The tests stage a copy of the SAME Go test exe as a payload, then check:
+
+- AppContainer token, controlled environment, staged read and nested output write.
+- Read/overwrite/create denial against an external private user/SYSTEM fixture.
+- TCP denial against a real local listener with an unsandboxed positive control.
+- Additional child process refusal, EOF response completion, and SID ACL cleanup.
+- Deadline, monitored-parent exit, and .cancel killing a confirmed child PID.
+- Missing/relative/file root, missing/outside executable, invalid timeout, hardlinks.
+
+They do not execute Node/SDK/FFmpeg, test public internet routes, force-kill the
+launcher, or assert deletion of the profile via registry inspection. Full Windows
+packaging/runtime and forced-termination acceptance remain integration work.
+No Windows execution result is claimed from a macOS build.

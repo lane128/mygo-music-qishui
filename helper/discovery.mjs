@@ -21,8 +21,7 @@ export function feedPreference(id) {
     const value = sceneID(id.slice(6))
     // JSON raw numbers preserve int64 scene IDs without rounding their identity.
     if (BigInt(value) > BigInt(Number.MAX_SAFE_INTEGER)) {
-      if (typeof JSON.rawJSON !== 'function') throw error('setup')
-      return { scene_mode_id: JSON.rawJSON(value) }
+      return { scene_mode_id: typeof JSON.rawJSON === 'function' ? JSON.rawJSON(value) : BigInt(value) }
     }
     return { scene_mode_id: Number(value) }
   }
@@ -49,7 +48,9 @@ export function modesOf(result, cover) {
       const scene = entry.entity?.feed_scene_mode
       if (!scene || typeof entry.text !== 'string' || !entry.text.trim()) throw error('response')
       const id = scene.scene_mode_id != null ? 'scene:' + sceneID(scene.scene_mode_id) : preferenceID(scene.sub_queue_type)
-      if (!modes.has(id)) modes.set(id, { id, name: entry.text, group: block.title, imageUrl: cover(entry.url_info) })
+      const existing = modes.get(id), imageUrl = cover(entry.url_info)
+      if (!existing) modes.set(id, { id, name: entry.text, group: block.title, imageUrl })
+      else if (!existing.imageUrl && imageUrl) existing.imageUrl = imageUrl
     }
   }
   return [...modes.values()]

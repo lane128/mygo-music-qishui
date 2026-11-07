@@ -1,0 +1,7 @@
+{
+  "NODE-LICENSE": { "url": "https://raw.githubusercontent.com/nodejs/node/v24.15.0/LICENSE", "sha256": "4573185d56580da2b890ba34a85a409257640f1c5632eade4300137266194d18" },
+  "node_api_types.h": { "url": "https://raw.githubusercontent.com/nodejs/node/v24.15.0/src/node_api_types.h", "sha256": "a25356630d3058f0a0c8937d9f297e9471e037fda58c2696d8a505c2bd99cb00" },
+  "node_api.h": { "url": "https://raw.githubusercontent.com/nodejs/node/v24.15.0/src/node_api.h", "sha256": "2d4560831e525b47b060ec8a0864ab73993df9e20215ce9f0fe7b24cd31af32a" },
+  "js_native_api.h": { "url": "https://raw.githubusercontent.com/nodejs/node/v24.15.0/src/js_native_api.h", "sha256": "eb03b6c850a1cfb593fd03e9e4251db8c82e9a6d9705bca91ac8d1a01fd7037c" },
+  "js_native_api_types.h": { "url": "https://raw.githubusercontent.com/nodejs/node/v24.15.0/src/js_native_api_types.h", "sha256": "7dd3663630849ada3a30d39abf42a192c9b6e7de63017cd32c41f5371a475b34" }
+}

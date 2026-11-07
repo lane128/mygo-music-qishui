@@ -1,18 +1,13 @@
-// One helper per operation/login attempt. JSON lines are private pipe messages.
+// Music operations use private JSON-line pipe messages. Login runs in MyGO's sandbox.
 import readline from 'node:readline'
-import { Login, error, restoreAccount } from './protocol.mjs'
-import { createBrowser } from './browser.mjs'
-import { Catalog } from './catalog.mjs'
-import { scenePage } from './scene-pages.mjs'
-import { discoverySection } from './exploration.mjs'
+import { error } from './protocol.mjs'
+import { validateSession } from './catalog-core.mjs'
+import { signRequest } from './native.mjs'
 import { audioServer } from './audio-server.mjs'
 
 const send = frame => process.stdout.write(JSON.stringify(frame) + '\n')
 const controller = new AbortController()
 const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })
-let browser
-let login
-let idle
 let ended = false
 let music = false
 let audio
@@ -22,108 +17,51 @@ const stop = () => {
   controller.abort()
   lines.close()
   process.stdin.destroy()
-  browser?.close().catch(() => {})
   audio?.close().catch(() => {})
 }
 process.on('SIGTERM', stop)
 process.on('SIGINT', stop)
 lines.on('close', stop)
-const lifetime = setTimeout(stop, 270000)
-const armIdle = () => {
-  clearTimeout(idle)
-  if (!music) idle = setTimeout(stop, 40000)
-}
-armIdle()
+const idle = setTimeout(stop, 40000)
 try {
   for await (const line of lines) {
     if (ended) break
-    clearTimeout(idle)
     try {
       if (line.length > 131072) throw error('response')
       const spec = JSON.parse(line)
-      if (spec.op === 'start' && !browser) {
-        browser = await createBrowser(spec.config, controller.signal)
-        login = new Login(browser)
-        const qr = await login.start()
-        if (ended) break
-        send({ ok: true, ...qr })
-      } else if (spec.op === 'check' && login) {
-        const result = await login.check()
-        if (ended) break
-        if (result.status === 'confirmed') {
-          await browser.close()
-          send({ ok: true, ...result })
+      if (spec.op !== 'music') throw error('response')
+      music = true
+      clearTimeout(idle)
+      const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(24000)])
+      validateSession(spec.session)
+      const params = spec.params || {}
+      let result
+      switch (spec.method) {
+        case 'sign': {
+          const url = new URL(params.url)
+          const paths = ['/luna/pc/me/recently-played-media', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks']
+          if (url.origin !== 'https://api.qishui.com' || url.username || url['pass' + 'word'] || url.hash || !paths.includes(url.pathname) || params.did !== spec.session.deviceID || url.searchParams.get('device_id') !== params.did) throw error('response')
+          if (!params.headers || Object.keys(params.headers).length > 64 || Object.entries(params.headers).some(([key, value]) => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || typeof value !== 'string' || /[\r\n\0]/.test(value))) throw error('response')
+          result = await signRequest({ url: url.href, headers: params.headers, did: params.did, signal })
           break
         }
-        send({ ok: true, ...result })
-      } else if (spec.op === 'account' && !browser) {
-        const account = await restoreAccount(spec.session)
-        if (!ended) send({ ok: true, account })
-        break
-      } else if (spec.op === 'music' && !browser) {
-        music = true
-        clearTimeout(lifetime)
-        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(24000)])
-        const catalog = new Catalog(spec.session, { signal })
-        const params = spec.params || {}
-        let result
-        switch (spec.method) {
-          case 'home': result = await catalog.home(); break
-          case 'playlists': result = await catalog.playlists(); break
-          case 'playlist': result = await catalog.playlist(params.id); break
-          case 'search': {
-            const page = await catalog.search(params)
-            if (!ended) send({ ok: true, ...page })
-            continue
-          }
-          case 'modes': result = await catalog.listeningModes(); break
-          case 'modePage': {
-            if (params.page === 'scene-modes') {
-              result = scenePage(await catalog.listeningModes(), params.page)
-              break
-            }
-            if (params.page !== 'listening-modes') throw error('unsupported')
-            const [modes, page] = await Promise.all([catalog.listeningModes(), catalog.discoveryPage()])
-            if (!ended) send({ ok: true, result: scenePage(modes, params.page, page.items), discovery: page.state, more: page.more })
-            continue
-          }
-          case 'discover': {
-            if (params.state == null) throw error('response')
-            const page = await catalog.discoveryPage(params.state)
-            result = { title: '探索更多新模式', sections: [discoverySection(page.items)] }
-            if (!ended) send({ ok: true, result, discovery: page.state, more: page.more })
-            continue
-          }
-          case 'radio': {
-            const page = await catalog.radioBatch(params)
-            if (!ended) send({ ok: true, ...page })
-            continue
-          }
-          case 'feed': result = await catalog.recommendationBatch(params); break
-          case 'lyrics': result = await catalog.lyrics(params.id); break
-          case 'stream': {
-            const { resolvePlayback } = await import('./playback.mjs')
-            const stream = await resolvePlayback(spec.session, params, { signal })
-            if (ended) break
-            audio ||= await audioServer()
-            result = audio.add(stream)
-            break
-          }
-          default: throw error('unsupported')
+        case 'stream': {
+          const { resolvePlayback } = await import('./playback.mjs')
+          const stream = await resolvePlayback(spec.session, params, { signal })
+          if (ended) break
+          audio ||= await audioServer()
+          result = audio.add(stream)
+          break
         }
-        if (!ended) send({ ok: true, result })
-      } else {
-        throw error('response')
+        default: throw error('unsupported')
       }
-      armIdle()
+      if (!ended) send({ ok: true, result })
     } catch (err) {
-      if (!ended) send({ ok: false, error: ['setup', 'browserMissing', 'signature', 'rateLimit', 'verify', 'expired', 'rejected', 'session', 'network', 'response', 'unsupported', 'unavailable', 'preview'].includes(err.kind) ? err.kind : 'response' })
+      if (!ended) send({ ok: false, error: ['setup', 'rateLimit', 'verify', 'expired', 'rejected', 'session', 'network', 'response', 'unsupported', 'unavailable', 'preview'].includes(err.kind) ? err.kind : 'response' })
       if (!music) break
     }
   }
 } finally {
   clearTimeout(idle)
-  clearTimeout(lifetime)
   stop()
-  await browser?.close().catch(() => {})
 }

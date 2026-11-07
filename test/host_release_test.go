@@ -59,14 +59,24 @@ func TestQishuiPublishedRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	installed := filepath.Join(dir, "qishui-app-login")
-	node := filepath.Join("bin", "node-"+runtime.GOOS+"-"+runtime.GOARCH)
-	for _, name := range []string{node, "runtime/security/bdms.js", "runtime/security/sdk-glue.js", "runtime/native/bdms.node", "runtime/native/libMetaSecML.dylib", "runtime/native/audio-convert", "assets/scene-covers/manifest.json", "assets/history.png"} {
+	worker := filepath.Join("bin", "qishui-helper-"+runtime.GOOS+"-"+runtime.GOARCH)
+	native := []string{"runtime/native/libMetaSecML.dylib", "runtime/native/audio-convert"}
+	if runtime.GOOS == "windows" {
+		worker += ".exe"
+		native = []string{"runtime/native/metasecml.dll", "runtime/native/ffmpeg.exe", "runtime/native/windows-runner.exe", "runtime/native/FFMPEG-LICENSE", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE"}
+	}
+	signer := "runtime/native/qishui-sign"
+	if runtime.GOOS == "windows" {
+		signer += ".exe"
+	}
+	files := append([]string{worker, signer, "native/signer/include/NODE-LICENSE", "runtime/native/bdms.node", "LICENSE", "NOTICE.md", "src/plugin.mjs", "native/worker/go.mod"}, native...)
+	for _, name := range files {
 		info, err := os.Stat(filepath.Join(installed, name))
 		if err != nil || info.Size() == 0 {
 			t.Fatal("installed release is missing a required runtime file")
 		}
-		if name == node && info.Mode().Perm()&0111 == 0 {
-			t.Fatal("installed Node runtime is not executable")
+		if name == worker && runtime.GOOS != "windows" && info.Mode().Perm()&0111 == 0 {
+			t.Fatal("installed native worker is not executable")
 		}
 	}
 	p, err := Load(installed, t.TempDir())
@@ -78,7 +88,7 @@ func TestQishuiPublishedRelease(t *testing.T) {
 	if origin == nil || origin.Repo != release.Repo || origin.Version != "v"+version {
 		t.Fatal("installed plugin is missing its repository update origin")
 	}
-	for _, capability := range []string{"home", "playlist", "search", "lyrics", "stream", "stations", "stationNext", "browse"} {
+	for _, capability := range []string{"home", "playlist", "artist", "played", "search", "lyrics", "stream", "stations", "stationNext", "browse"} {
 		if !p.Can(capability) {
 			t.Fatal("published plugin is missing its music capabilities")
 		}

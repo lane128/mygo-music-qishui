@@ -1,151 +1,109 @@
 import assert from 'node:assert/strict'
-import { test } from 'node:test'
-import { spawn } from 'node:child_process'
-import { access } from 'node:fs/promises'
+import { after, test } from 'node:test'
+import { spawn, spawnSync } from 'node:child_process'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import readline from 'node:readline'
 import { fileURLToPath } from 'node:url'
+import path from 'node:path'
+import { tmpdir } from 'node:os'
+import { requestJSON } from '../helper/catalog.mjs'
 
-const session = { version: 1, deviceID: '1234567890123456', installID: '123456789012345', cookies: [{ name: 'sessionid', value: 'fixture-session' }] }
-const nativeReady = process.platform === 'darwin' && await access(new URL('../runtime/native/bdms.node', import.meta.url)).then(() => true, () => false)
-
-// Execute the real worker, replacing only remote network responses through a Node preload.
-test('actual worker serves catalog results and remains usable after an unsupported operation', async () => {
-  const child = spawn(process.execPath, ['--import', fileURLToPath(new URL('./fixtures/music-service.mjs', import.meta.url)), fileURLToPath(new URL('../helper/worker.mjs', import.meta.url))], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } })
+const session = { version: 1, deviceID: '1234567890123456', installID: '123456789012345' }
+const windows = process.platform === 'win32'
+const platform = windows ? 'windows' : process.platform
+const name = `qishui-helper-${platform}-${process.arch === 'x64' ? 'amd64' : process.arch}${windows ? '.exe' : ''}`
+const packaged = process.env.QISHUI_NATIVE_ROOT
+let executable
+if (packaged) {
+  assert.ok(path.isAbsolute(packaged), 'QISHUI_NATIVE_ROOT must be absolute')
+  executable = path.join(packaged, 'bin', name)
+  await access(executable)
+} else {
+  const output = await mkdtemp(path.join(tmpdir(), 'qishui-worker-ipc-'))
+  after(() => rm(output, { recursive: true, force: true }))
+  executable = path.join(output, name)
+  const built = spawnSync('go', ['-C', fileURLToPath(new URL('../native/worker', import.meta.url)), 'build', '-trimpath', '-buildvcs=false', '-o', executable, '.'], {
+    env: { ...process.env, CGO_ENABLED: '0' }, encoding: 'utf8', timeout: 180000,
+  })
+  assert.equal(built.status, 0, built.stderr || 'Native IPC tests require Go')
+}
+function worker() {
+  const env = windows ? { PATH: '', SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP } : { PATH: '/usr/bin:/bin', HOME: process.env.HOME }
+  const child = spawn(executable, [], { stdio: ['pipe', 'pipe', 'pipe'], env })
   const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]()
-  const exit = new Promise(resolve => child.once('exit', code => resolve(code)))
-  const timer = setTimeout(() => child.kill('SIGKILL'), 20000)
-  const request = async (method, params = {}) => {
-    child.stdin.write(JSON.stringify({ op: 'music', session, method, params }) + '\n')
-    const { value, done } = await lines.next()
-    assert.equal(done, false)
-    return JSON.parse(value)
+  const exit = new Promise((resolve, reject) => { child.once('exit', (code, signal) => resolve({ code, signal })); child.once('error', reject) })
+  let stderrBytes = 0
+  child.stderr.on('data', chunk => { stderrBytes += chunk.length })
+  const timer = setTimeout(() => child.kill('SIGKILL'), 30000)
+  return {
+    async raw(value) { child.stdin.write(value + '\n'); const next = await lines.next(); assert.equal(next.done, false); return JSON.parse(next.value) },
+    async request(spec) { return this.raw(JSON.stringify(spec)) },
+    async close() {
+      child.stdin.end()
+      try { assert.deepEqual(await exit, { code: 0, signal: null }); assert.equal(stderrBytes, 0, 'Worker must not log private input or SDK diagnostics') }
+      finally { clearTimeout(timer) }
+    },
   }
+}
+const spec = (method, params = {}) => ({ op: 'music', session, method, params })
+
+// Execute the actual native protocol even when no proprietary SDK is available.
+test('native worker rejects removed authentication and catalog operations', async () => {
+  const w = worker()
   try {
-    const home = await request('home')
-    if (nativeReady) {
-      assert.equal(home.ok, true)
-      assert.equal(home.result.sections.length, 1)
-      assert.equal(home.result.sections[0].stations[0].id, 'radio:42')
-      assert.equal(home.result.sections[0].playlists, undefined)
-      assert.equal(home.result.sections[0].morePage, 'listening-modes')
-    } else {
-      assert.equal(home.ok, false)
-      assert.equal(home.error, 'setup')
+    for (const op of ['start', 'check', 'account']) assert.deepEqual(await w.request({ op, session }), { ok: false, error: 'response' })
+    for (const method of ['home', 'playlists', 'playlist', 'search', 'modes', 'modePage', 'discover', 'radio', 'feed', 'lyrics']) {
+      assert.deepEqual(await w.request(spec(method)), { ok: false, error: 'unsupported' })
     }
-    const library = await request('playlists')
-    assert.equal(library.ok, true)
-    assert.deepEqual(library.result.slice(0, -1).map(p => p.id), ['123', '124', '125', '126', '127', '128', '129'])
-    assert.equal(library.result.length, 8)
-    assert.equal(library.result[0].trackCount, 1)
-    assert.equal(library.result[2].trackCount, 1)
-    assert.equal(library.result.at(-2).trackCount, undefined)
-    assert.equal(library.result.at(-2).id, '129')
-    assert.equal(library.result.at(-1).id, 'qishui:history')
-    assert.match(library.result.at(-1).imageUrl, /^file:/)
-    for (const id of ['empty-omitted', 'empty-null', 'empty-string-zero', 'empty-defaults']) {
-      const empty = await request('playlist', { id })
-      assert.equal(empty.ok, true)
-      assert.equal(empty.result.id, id)
-      assert.equal(empty.result.name, 'Empty fixture')
-      assert.equal(empty.result.description, 'Empty description')
-      assert.equal(empty.result.imageUrl, 'https://example.invalid/empty.jpg')
-      assert.deepEqual(empty.result.tracks, [])
-    }
-    const recovered = await request('playlist', { id: '124' })
-    assert.equal(recovered.ok, true)
-    assert.equal(recovered.result.name, 'Fixture Playlist 1')
-    assert.deepEqual(recovered.result.tracks, [])
-    assert.equal((await request('playlist', { id: '125' })).result.tracks[0].id, '7123456789012345678')
-    if (nativeReady) {
-      const history = await request('playlist', { id: 'qishui:history' })
-      assert.equal(history.ok, true)
-      assert.deepEqual(history.result.tracks.map(t => t.id), ['7123456789012345678', '2'])
-    }
-    assert.equal((await request('unsupported')).error, 'unsupported')
-    const playlist = await request('playlist', { id: '123' })
-    assert.equal(playlist.result.tracks[0].duration, 180000)
-    const search = await request('search', { query: '音乐' })
-    assert.equal(search.result.tracks[0].id, '7123456789012345678')
-    assert.equal((await request('lyrics', { id: '7123456789012345678' })).result.lrc, '[00:01.00]歌词')
-    child.stdin.write(JSON.stringify({ op: 'account', session }) + '\n')
-    const account = JSON.parse((await lines.next()).value)
-    assert.equal(account.ok, true)
-    assert.equal(account.account.name, 'SVIP · Fixture account')
-  } finally {
-    child.stdin.end()
-    assert.equal(await exit, 0)
-    clearTimeout(timer)
-  }
+  } finally { await w.close() }
 })
 
-// The packaged worker must sign mode discovery and scene-specific continuations using the actual SDK.
-test('packaged worker signs listening modes and recommendation continuations', { skip: !nativeReady }, async () => {
-  const child = spawn(process.execPath, ['--import', fileURLToPath(new URL('./fixtures/music-service.mjs', import.meta.url)), fileURLToPath(new URL('../helper/worker.mjs', import.meta.url))], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } })
-  const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]()
-  const exit = new Promise(resolve => child.once('exit', code => resolve(code)))
-  const timer = setTimeout(() => child.kill('SIGKILL'), 20000)
-  const request = async (method, params = {}) => {
-    child.stdin.write(JSON.stringify({ op: 'music', session, method, params }) + '\n')
-    return JSON.parse((await lines.next()).value)
-  }
+test('native signing bridge rejects invalid origins, devices and headers without losing its protocol', async () => {
+  const w = worker()
+  const base = { url: 'https://api.qishui.com/luna/pc/feed/mode?device_id=' + session.deviceID, did: session.deviceID, headers: { Accept: 'application/json' } }
   try {
-    const modes = await request('modes')
-    assert.equal(modes.ok, true)
-    assert.equal(modes.result[2].id, 'scene:0')
-    const landing = await request('modePage', { page: 'listening-modes' })
-    assert.equal(landing.ok, true)
-    assert.deepEqual(landing.result.sections[0].stations.map(mode => mode.id), modes.result.slice(0, 8).map(mode => mode.id))
-    assert.equal(landing.result.sections[0].stations.length, 8)
-    assert.equal(landing.result.sections[0].morePage, 'scene-modes')
-    assert.equal(landing.result.sections[1].stations[0].id, 'radio:42')
-    assert.equal(landing.more, true)
-    const next = await request('discover', { state: landing.discovery })
-    assert.equal(next.ok, true)
-    assert.equal(next.result.sections[0].stations[0].id, 'radio:43')
-    assert.equal(next.more, false)
-    const allModes = await request('modePage', { page: 'scene-modes' })
-    assert.equal(allModes.ok, true)
-    assert.deepEqual(allModes.result.sections[0].stations.map(mode => mode.id), modes.result.map(mode => mode.id))
-    assert.equal(allModes.result.sections[0].stations[2].id, 'scene:0')
-    const radio = await request('radio', { id: 'radio:42', cursor: 'opaque-radio' })
-    assert.equal(radio.ok, true)
-    assert.equal(radio.result[0].id, '7123456789012345678')
-    assert.equal(radio.more, false)
-    const batch = await request('feed', { id: modes.result[2].id, count: 2, firstDeviceRequest: true, firstUseTime: 1700000000, played: [{ id: '2', duration: 180999 }] })
-    assert.equal(batch.ok, true)
-    assert.equal(batch.result[0].id, '7123456789012345678')
-    assert.equal(batch.result[0].duration, 180000)
-    assert.equal((await request('feed', { id: 'scene:-1' })).error, 'response')
-  } finally {
-    child.stdin.end()
-    assert.equal(await exit, 0)
-    clearTimeout(timer)
-  }
+    for (const changes of [
+      { url: 'https://evil.invalid/luna/pc/feed/mode' },
+      { url: 'https://api.qishui.com/not-supported?device_id=' + session.deviceID },
+      { url: 'https://user@api.qishui.com/luna/pc/feed/mode?device_id=' + session.deviceID },
+      { url: 'https://api.qishui.com:8443/luna/pc/feed/mode?device_id=' + session.deviceID },
+      { url: base.url + '#fragment' }, { did: '1111111111111111' },
+      { headers: { Accept: 'application/json\r\nInjected: bad' } },
+      { headers: { 'bad header': 'value' } },
+      { headers: { Accept: 'application/json' }, headerLines: 'accept\r\ndifferent-value' },
+    ]) assert.deepEqual(await w.request(spec('sign', { ...base, ...changes })), { ok: false, error: 'response' })
+    assert.deepEqual(await w.request(spec('unsupported')), { ok: false, error: 'unsupported' })
+  } finally { await w.close() }
 })
 
-// The complete ZIP signs a fixture grant with its real native SDK and serves only authorized bytes.
-test('packaged worker signs and bridges granted audio until stdin closes', { skip: !nativeReady }, async () => {
-  const child = spawn(process.execPath, ['--import', fileURLToPath(new URL('./fixtures/music-service.mjs', import.meta.url)), fileURLToPath(new URL('../helper/worker.mjs', import.meta.url))], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } })
-  const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]()
-  const exit = new Promise(resolve => child.once('exit', code => resolve(code)))
-  const timer = setTimeout(() => child.kill('SIGKILL'), 20000)
-  let url
+test('native worker recovers after oversized and duplicate-key input and refuses missing grants', async () => {
+  const w = worker()
   try {
-    child.stdin.write(JSON.stringify({ op: 'music', method: 'stream', params: { id: '7123456789012345678', quality: 'high' }, session }) + '\n')
-    const frame = JSON.parse((await lines.next()).value)
-    assert.equal(frame.ok, true, 'packaged native signing or audio bridge failed')
-    assert.equal(frame.result.type, 'mp3')
-    assert.equal(frame.result.quality, 'high')
-    assert.equal(frame.result.data, undefined)
-    url = frame.result.url
-    assert.equal(new URL(url).hostname, '127.0.0.1')
-    const response = await fetch(url, { headers: { Range: 'bytes=0-3' } })
-    assert.equal(response.status, 206)
-    assert.deepEqual(Buffer.from(await response.arrayBuffer()), Buffer.from([0xff, 0xfb, 0x90, 0x64]))
-  } finally {
-    child.stdin.end()
-    assert.equal(await exit, 0)
-    clearTimeout(timer)
-  }
-  if (url) await assert.rejects(fetch(url))
+    assert.deepEqual(await w.raw('x'.repeat(131073)), { ok: false, error: 'response' })
+    assert.deepEqual(await w.raw('{"op":"music","op":"start"}'), { ok: false, error: 'response' })
+    assert.deepEqual(await w.request(spec('stream', { id: '123', quality: 'high' })), { ok: false, error: 'unavailable' })
+    assert.deepEqual(await w.request(spec('unsupported')), { ok: false, error: 'unsupported' })
+  } finally { await w.close() }
+})
+
+// QISHUI_NATIVE_ROOT selects an extracted complete package. PATH contains no Node.
+test('packaged native worker returns only actual SDK signatures and exits on EOF', { skip: !packaged }, async () => {
+  const w = worker()
+  try {
+    for (const [endpoint, body] of [
+      ['/luna/pc/feed/mode', {}],
+      ['/luna/pc/me/recently-played-media', { media: [{ type: 'track', id: '91' }] }],
+    ]) {
+      let signing
+      await requestJSON({ ...session, cookies: [{ name: 'sessionid', value: 'fixture-session' }] }, endpoint, { signed: true, body }, {
+        sign: async value => { signing = value; return { 'x-helios': 'fixture-helios', 'x-medusa': 'fixture-medusa' } },
+        fetch: async () => new Response('{}'),
+      })
+      const headers = Object.fromEntries(Object.entries(signing.headers).map(([key, value]) => [key.toLowerCase(), value]))
+      const frame = await w.request(spec('sign', { ...signing, headers, headerLines: Object.entries(headers).flat().join('\r\n') }))
+      assert.equal(frame.ok, true, `Packaged isolated SDK call failed for ${endpoint}: ${frame.error || 'no diagnostic'}`)
+      assert.deepEqual(Object.keys(frame.result).sort(), ['x-helios', 'x-medusa'])
+      assert.ok(Object.values(frame.result).every(value => typeof value === 'string' && value.length > 0))
+    }
+  } finally { await w.close() }
 })

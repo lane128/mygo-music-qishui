@@ -17,7 +17,7 @@ func qishuiHistoryApp(t *testing.T, fixture qishuiSceneFixtures) (*app, []music.
 	lists := []music.Playlist{
 		{ID: "fixture-liked", Name: "我喜欢的音乐", ImageURL: fixture.Pages["home"].Sections[0].Stations[0].ImageURL},
 		{ID: "fixture-douyin", Name: "抖音收藏的音乐", ImageURL: fixture.Pages["home"].Sections[0].Stations[0].ImageURL, Description: "这个歌单暂时没有歌曲。"},
-		{ID: "qishui:history", Name: "历史播放", ImageURL: "qishui-history-cover", Description: "汽水音乐账号的最近播放记录，最多展示 1000 首歌曲。", Tracks: sourced(fixture.Tracks...)},
+		{ID: "qishui:history", Name: "历史播放", Description: "汽水音乐账号的最近播放记录，最多展示 1000 首歌曲。", Tracks: sourced(fixture.Tracks...)},
 	}
 	a.saved = lists
 	return a, lists

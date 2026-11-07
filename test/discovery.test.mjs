@@ -21,7 +21,8 @@ test('loads signed grouped modes without conflating scene zero and absent IDs', 
   const modes = await catalog.listeningModes()
   assert.deepEqual(modes.map(mode => mode.id), ['preference:familiar', 'preference:fresh', 'scene:0', 'scene:42', 'preference:custom%3Afocus'])
   assert.equal(modes.find(mode => mode.id === 'scene:0').group, '心情')
-  assert.equal(new URL(modes[2].imageUrl).protocol, 'file:')
+  assert.equal(modes[2].imageUrl, 'https://p3-luna.douyinpic.com/img/scene-cover~c5_300x300.jpg')
+  assert.equal(modes.find(mode => mode.id === 'preference:fresh').imageUrl, modes[2].imageUrl)
   assert.deepEqual(feedPreference(modes[4].id), { preference_mode: 'custom:focus' })
 })
 
@@ -67,7 +68,7 @@ test('signs precise recommendation bodies and preserves large scene and track ID
     fetch: async (url, options) => {
       assert.equal(new URL(url).pathname, '/luna/pc/feed/song-tab')
       assert.equal(url, signed.url)
-      assert.equal(new URL(url).searchParams.get('device_platform'), 'mac')
+      assert.equal(new URL(url).searchParams.get('device_platform'), process.platform === 'win32' ? 'windows' : 'mac')
       assert.equal(options.method, 'POST')
       assert.equal(options.redirect, 'error')
       assert.match(options.body, /"scene_mode_id":9223372036854775807/)

@@ -268,7 +268,7 @@ test('signs the final PC request and never exposes credentials to alternate host
     fetch: async (url, options) => {
       assert.equal(url, signed.url)
       assert.equal(new URL(url).hostname, 'api.qishui.com')
-      assert.equal(new URL(url).searchParams.get('device_platform'), 'mac')
+      assert.equal(new URL(url).searchParams.get('device_platform'), process.platform === 'win32' ? 'windows' : 'mac')
       assert.equal(options.body, '{"track_id":"123"}')
       assert.equal(options.headers.Cookie, ['sessionid', session.cookies[0].value].join('='))
       assert.equal(options.headers['X-SS-STUB'], '3EB6F837CE8FDAF2B242A107D85CB626')
