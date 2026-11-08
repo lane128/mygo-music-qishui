@@ -1,5 +1,7 @@
 # MyGo Music 汽水音乐插件
 
+简体中文 | [English](README.en.md)
+
 在 [MyGo Music](https://github.com/egoist/mygo-music) 中使用汽水音乐，搜索和播放歌曲，浏览推荐、歌手与专辑，管理自己的音乐库。
 
 使用汽水音乐 App 扫码登录，提供 macOS 与 Windows 安装包。
