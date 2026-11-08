@@ -126,8 +126,8 @@ func decodeWithKey(input, key []byte) (result []byte, err error) {
 		rejectUnless(b.typ != "moof")
 	}
 	mdat := one(top, "mdat")
-	parent := one(top, "moov")
-	for _, typ := range []string{"trak", "mdia", "minf", "stbl"} {
+	parent, audioStart, audioEnd := audioTrack(output, one(top, "moov"), mdat)
+	for _, typ := range []string{"mdia", "minf", "stbl"} {
 		parent = one(boxes(output, parent.body, parent.end), typ)
 	}
 	tables := boxes(output, parent.body, parent.end)
@@ -148,7 +148,7 @@ func decodeWithKey(input, key []byte) (result []byte, err error) {
 		rejectUnless(sizes[i] > 0)
 		total += uint64(sizes[i])
 	}
-	rejectUnless(total == uint64(mdat.end-mdat.body))
+	rejectUnless(total == uint64(audioEnd-audioStart))
 	var offsetBoxes []mp4Box
 	for _, b := range tables {
 		if b.typ == "stco" || b.typ == "co64" {
@@ -178,7 +178,7 @@ func decodeWithKey(input, key []byte) (result []byte, err error) {
 		r := runs[i]
 		rejectUnless(r.count > 0 && r.entry == 1 && r.first <= chunks && (i == 0 && r.first == 1 || i > 0 && r.first > runs[i-1].first))
 	}
-	sample, expected, run := 0, mdat.body, 0
+	sample, expected, run := 0, audioStart, 0
 	for i := 0; i < chunks; i++ {
 		for run+1 < len(runs) && runs[run+1].first <= i+1 {
 			run++
@@ -194,7 +194,7 @@ func decodeWithKey(input, key []byte) (result []byte, err error) {
 			sample++
 		}
 	}
-	rejectUnless(sample == count)
+	rejectUnless(sample == count && expected == audioEnd)
 	stsd := one(tables, "stsd")
 	enough(stsd, stsd.body, 8)
 	rejectUnless(u32(output, stsd.body+4) == 1)
@@ -239,7 +239,7 @@ func decodeWithKey(input, key []byte) (result []byte, err error) {
 	enough(senc, senc.body, 8)
 	flags := u32(output, senc.body) & 0xffffff
 	rejectUnless(output[senc.body] == 0 && flags & ^2 == 0 && u32(output, senc.body+4) == count)
-	p, offset := senc.body+8, mdat.body
+	p, offset := senc.body+8, audioStart
 	block, e := aes.NewCipher(key)
 	rejectUnless(e == nil)
 	for _, size := range sizes {
@@ -272,13 +272,13 @@ func decodeWithKey(input, key []byte) (result []byte, err error) {
 		}
 		offset = end
 	}
-	rejectUnless(p == senc.end && offset == mdat.end)
+	rejectUnless(p == senc.end && offset == audioEnd)
 	if format == "fLaC" {
-		rejectUnless(4+len(metadata)+mdat.end-mdat.body <= maxAudio)
-		result = make([]byte, 0, 4+len(metadata)+mdat.end-mdat.body)
+		rejectUnless(4+len(metadata)+audioEnd-audioStart <= maxAudio)
+		result = make([]byte, 0, 4+len(metadata)+audioEnd-audioStart)
 		result = append(result, []byte("fLaC")...)
 		result = append(result, metadata...)
-		result = append(result, output[mdat.body:mdat.end]...)
+		result = append(result, output[audioStart:audioEnd]...)
 		return result, nil
 	}
 	copy(output[entry.pos+4:], "mp4a")

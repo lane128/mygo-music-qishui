@@ -21,12 +21,12 @@ func TestAudioBridgeHTTP(t *testing.T) {
 		t.Fatal("bridge setup failed")
 	}
 	defer b.close()
-	added, e := b.add(audioStream{Data: []byte("0123456789"), Type: "flac", Quality: "high", BitRate: 256000})
+	added, e := b.add(audioStream{Data: []byte("0123456789"), Type: "m4a", Quality: "standard", BitRate: 132000})
 	if e != nil {
 		t.Fatal("bridge add failed")
 	}
 	u, _ := url.Parse(added.URL)
-	if added.Type != "flac" || added.Quality != "high" || added.BitRate != 256000 || added.Size != 10 || len(u.Path) != 49 {
+	if added.Type != "m4a" || added.Quality != "standard" || added.BitRate != 132000 || added.Size != 10 || len(u.Path) != 49 {
 		t.Fatal("bridge metadata mismatch")
 	}
 	cases := []struct {

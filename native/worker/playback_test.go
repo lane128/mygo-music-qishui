@@ -28,6 +28,10 @@ func TestMediaRedirects(t *testing.T) {
 	}{
 		{"https://cdn.byteimg.com/final", false, true}, {"https://edge.qrstuvwxyzab.com/final", true, true},
 		{"https://edge.qrstuvwxyzab.com/final", false, false}, {"https://nested.edge.qrstuvwxyzab.com/final", true, false},
+		{"https://edge.ctydoh.cn/final", true, true}, {"https://edge.ctydoh.cn/final", false, false},
+		{"https://nested.edge.ctydoh.cn/final", true, false}, {"https://ctydoh.cn/final", true, false},
+		{"https://user@edge.ctydoh.cn/final", true, false}, {"https://edge.ctydoh.cn:444/final", true, false},
+		{"https://edge.ctydoh.cn.evil/final", true, false}, {"http://edge.ctydoh.cn/final", true, false},
 		{"http://cdn.byteimg.com/final", true, false}, {"https://cdn.byteimg.com:444/final", true, false},
 		{"https://user@cdn.byteimg.com/final", true, false}, {"https://cdn.byteimg.com/final#x", true, false}, {"https://outside.example/final", true, false},
 	} {
@@ -55,7 +59,10 @@ func TestMediaRedirects(t *testing.T) {
 			t.Fatal("forbidden redirect accepted")
 		}
 	}
-	for _, u := range []string{"https://edge.qrstuvwxyzab.com/direct", "https://127.0.0.1/x", "https://qishui.com.evil/x", "https://qishui.com:443/x", "https://user@qishui.com/x", "https://qishui.com/x\n"} {
+	if redirectAllowed("https://edge.ctydoh.cn/final", "https://edge.qrstuvwxyzab.com/source", true) || redirectAllowed("https://edge.ctydoh.cn/final", "https://outside.example/source", true) {
+		t.Fatal("delegated redirect accepted without an official source")
+	}
+	for _, u := range []string{"https://edge.ctydoh.cn/direct", "https://edge.qrstuvwxyzab.com/direct", "https://127.0.0.1/x", "https://qishui.com.evil/x", "https://qishui.com:443/x", "https://user@qishui.com/x", "https://qishui.com/x\n"} {
 		if mediaURL(u) {
 			t.Fatal("invalid media origin accepted")
 		}
@@ -133,7 +140,7 @@ func fixtureGrant(list ...map[string]any) json.RawMessage {
 	return b
 }
 func TestGrantedSelectionAndPreview(t *testing.T) {
-	grant := fixtureGrant(fixtureCandidate("aac", "medium", "a"), fixtureCandidate("aac", "highest", "b"), fixtureCandidate("flac", "lossless", "c"))
+	grant := fixtureGrant(fixtureCandidate("aac", "medium", "excluded"), fixtureCandidate("aac", "higher", "a"), fixtureCandidate("aac", "highest", "b"), fixtureCandidate("flac", "lossless", "c"))
 	for _, tc := range []struct{ quality, auth string }{{"standard", "a"}, {"high", "b"}, {"lossless", "c"}} {
 		selected, _, e := grantedCandidates(grant, "123", tc.quality)
 		if e != nil || selected.Auth != tc.auth {
@@ -169,7 +176,7 @@ func TestSameGrantFallback(t *testing.T) {
 				if mode == "network" {
 					return nil, errUnavailable
 				}
-				return []byte{0, 0, 0, 8, 'f', 't', 'y', 'p'}, nil
+				return fixtureM4A(t), nil
 			}
 			w.decode = func(_ context.Context, data []byte, auth string) ([]byte, error) {
 				if auth == "flac" {
@@ -186,10 +193,9 @@ func TestSameGrantFallback(t *testing.T) {
 				}
 				return data, nil
 			}
-			w.convert = func(context.Context, []byte) ([]byte, error) { return fixtureFLAC(), nil }
 			result, e := resolvePlayback(ctx, fixtureGrant(fixtureCandidate("flac", "lossless", "flac"), fixtureCandidate("aac", "highest", "aac")), "123", "lossless", w)
 			if mode == "format" {
-				if e != nil || downloads != 2 || result.Type != "flac" || result.Quality != "high" {
+				if e != nil || downloads != 2 || result.Type != "m4a" || !bytes.Equal(result.Data, fixtureM4A(t)) || result.Quality != "high" {
 					t.Fatal("same grant fallback failed")
 				}
 			} else {

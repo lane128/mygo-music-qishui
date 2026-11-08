@@ -3,7 +3,7 @@ import { readFile, readdir, realpath, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { WINDOWS_FILES, checkDigest, checkWindowsPE, inspectWindowsAudio, sha256 } from './runtime-assets.mjs'
+import { WINDOWS_FILES, checkDigest, checkWindowsPE, sha256 } from './runtime-assets.mjs'
 import { checkPackageLayout } from './package-layout.mjs'
 
 export async function checkWindowsPackage(root) {
@@ -45,8 +45,7 @@ export async function checkWindowsPackage(root) {
   if (manifest.id !== 'qishui-app-login' || manifest.permissions?.process?.join(',') !== 'bin/qishui-helper-*') throw new Error('Incorrect native plugin manifest')
   await walk(root)
   checkPackageLayout(files, { validation: packageKind === 'validation' })
-  const audioPE = inspectWindowsAudio(await readFile(path.join(native, 'ffmpeg.exe')))
-  return { platform: 'windows', arch, signerArch: 'amd64', ...(arch === 'arm64' ? { minimumWindows: '11', emulation: 'x64 signing and audio subprocesses' } : {}), runtime: 'native', nodeExecutableIncluded: false, packageKind, hashes, audioPE }
+  return { platform: 'windows', arch, signerArch: 'amd64', ...(arch === 'arm64' ? { minimumWindows: '11', emulation: 'x64 signing subprocess' } : {}), runtime: 'native', nodeExecutableIncluded: false, packageKind, hashes }
 }
 async function main() {
   const args = process.argv.slice(2)

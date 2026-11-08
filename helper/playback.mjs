@@ -2,7 +2,8 @@
 import https from 'node:https'
 import { rootCertificates } from 'node:tls'
 import { error, cookieHeader, parseJSON } from './protocol.mjs'
-import { decodeResource, convertAAC } from './native.mjs'
+import { decodeResource } from './native.mjs'
+import { nativeM4A } from './m4a.mjs'
 
 export const MAX_AUDIO_BYTES = 128 * 1024 * 1024
 const UA = 'LunaPC/3.7.0(452316191)'
@@ -10,6 +11,7 @@ const domains = ['qishui.com', 'douyinvod.com', 'byteimg.com', 'bytegecko.com', 
 const levels = ['standard', 'higher', 'exhigh', 'lossless', 'hires', 'spatial']
 const aliases = { low: 'standard', medium: 'standard', standard: 'standard', higher: 'higher', high: 'exhigh', highest: 'exhigh', exhigh: 'exhigh', lossless: 'lossless', hi_res: 'hires', hires: 'hires', spatial: 'spatial' }
 const rank = quality => levels.indexOf(aliases[quality] || 'exhigh')
+const requestedRank = { standard: rank('higher'), high: rank('highest'), lossless: rank('lossless') }
 
 function safeURL(raw) {
   try {
@@ -30,7 +32,7 @@ function redirectAllowed(destination, source, publiclyVerified) {
   const u = safeURL(destination)
   // A delegated zone is accepted only from a verified official CDN response.
   return !!u && mediaURL(source) && publiclyVerified === true &&
-    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.qrstuvwxyzab\.com$/.test(u.hostname)
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:qrstuvwxyzab\.com|ctydoh\.cn)$/.test(u.hostname)
 }
 
 function publicRequest(url, { signal, headers }) {
@@ -107,7 +109,7 @@ function candidateQuality(candidate) {
 
 export function grantedCandidates(payload, id, quality) {
   try {
-    if (!payload || typeof payload !== 'object' || [payload.error_code, payload.status_code, payload.status_info?.code].some(code => code != null && Number(code) !== 0)) throw error('unavailable')
+    if (!Object.hasOwn(requestedRank, quality) || !payload || typeof payload !== 'object' || [payload.error_code, payload.status_code, payload.status_info?.code].some(code => code != null && Number(code) !== 0)) throw error('unavailable')
     if (String(payload.track?.id) !== id || !Number.isFinite(payload.track?.duration) || payload.track.duration <= 0) throw error('unavailable')
     const raw = payload.track_player?.video_model
     const model = typeof raw === 'string' ? parseJSON(raw) : raw
@@ -121,16 +123,16 @@ export function grantedCandidates(payload, id, quality) {
       const codec = meta.codec_type.toLowerCase()
       if (!['aac', 'flac', 'mp3'].includes(codec) || auth != null && (typeof auth !== 'string' || auth.length > 4096)) return false
       if (auth && !['aac', 'flac'].includes(codec)) return false
+      const level = aliases[String(meta.quality).toLowerCase()]
+      if (codec === 'flac' ? level !== 'lossless' : !['higher', 'exhigh'].includes(level)) return false
+      if (rank(candidateQuality(item)) > requestedRank[quality]) return false
       if (meta.size != null && (!Number.isFinite(meta.size) || meta.size < 0 || meta.size > MAX_AUDIO_BYTES)) return false
       return meta.bitrate == null || Number.isFinite(meta.bitrate) && meta.bitrate >= 0
     }).sort((a, b) => rank(candidateQuality(a)) - rank(candidateQuality(b)) || (a.video_meta.bitrate || 0) - (b.video_meta.bitrate || 0))
     if (!list.length) throw error('unavailable')
-    let selected = list[0]
-    for (const candidate of list) if (rank(candidateQuality(candidate)) <= rank(quality)) selected = candidate
+    const selected = list.at(-1)
     // At most one format fallback, always from this exact grant, with its own auth.
-    const aac = list.filter(item => item.video_meta.codec_type.toLowerCase() === 'aac')
-    let fallback = aac[0]
-    for (const candidate of aac) if (rank(candidateQuality(candidate)) <= rank(quality)) fallback = candidate
+    const fallback = list.filter(item => item.video_meta.codec_type.toLowerCase() === 'aac').at(-1)
     return { selected, fallback }
   } catch { throw error('unavailable') }
 }
@@ -170,14 +172,10 @@ async function materialize(candidate, deps, signal) {
     if (auth) data = await deps.decode(data, auth, { signal })
     if (!Buffer.isBuffer(data) || !data.length || data.length > MAX_AUDIO_BYTES) throw error('unavailable')
     const codec = candidate.video_meta.codec_type.toLowerCase()
-    if (codec === 'aac') {
-      if (data.length < 8 || data.toString('ascii', 4, 8) !== 'ftyp') throw error('unavailable')
-      data = await deps.convert(data, { signal })
-    }
-    const type = codec === 'mp3' ? 'mp3' : 'flac'
-    if (!Buffer.isBuffer(data) || data.length > MAX_AUDIO_BYTES || !(type === 'flac' ? nativeFLAC(data) : mp3(data))) throw error('unavailable')
+    const type = codec === 'aac' ? 'm4a' : codec
+    if (!(type === 'm4a' ? nativeM4A(data) : type === 'flac' ? nativeFLAC(data) : mp3(data))) throw error('unavailable')
     const actual = candidateQuality(candidate)
-    const result = { data, type, quality: codec === 'flac' ? 'lossless' : actual === 'standard' ? 'standard' : 'high' }
+    const result = { data, type, quality: codec === 'flac' ? 'lossless' : actual === 'higher' ? 'standard' : 'high' }
     if (candidate.video_meta.bitrate > 0) result.bitRate = candidate.video_meta.bitrate
     return result
   } catch (cause) {
@@ -186,7 +184,7 @@ async function materialize(candidate, deps, signal) {
   }
 }
 
-// Tests can replace the account request, media transport, resource decoder and converter.
+// Tests can replace the account request, media transport and resource decoder.
 export async function resolvePlayback(session, { id, quality = 'high' }, deps = {}) {
   const deadline = AbortSignal.timeout(24000)
   const signal = deps.signal ? AbortSignal.any([deps.signal, deadline]) : deadline
@@ -199,7 +197,7 @@ export async function resolvePlayback(session, { id, quality = 'high' }, deps = 
       body: { track_id: id, media_type: 'track', queue_type: 'favorite_track_playlist', scene_name: 'library' }, signed: true, signal,
     })
     const { selected, fallback } = grantedCandidates(payload, id, quality)
-    const runtime = { download: deps.download || downloadGranted, decode: deps.decode || decodeResource, convert: deps.convert || convertAAC }
+    const runtime = { download: deps.download || downloadGranted, decode: deps.decode || decodeResource }
     let result
     try { result = await materialize(selected, runtime, signal) }
     catch (cause) {

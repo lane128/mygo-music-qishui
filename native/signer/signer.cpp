@@ -315,9 +315,21 @@ static void validate(const Request& r) {
     "/luna/pc/me/playlist","/luna/pc/me/playlist/update","/luna/pc/me/playlist/delete",
     "/luna/pc/me/playlist/media/append","/luna/pc/me/playlist/media/delete",
     "/luna/pc/me/collection/media","/luna/pc/me/collection/media/delete",
-    "/luna/pc/me/collection/playlist","/luna/pc/me/collection/playlist/delete"
+    "/luna/pc/me/collection/playlist","/luna/pc/me/collection/playlist/delete",
+    "/luna/pc/me/collection/artist","/luna/pc/me/collection/artist/delete",
+    "/luna/pc/me/collection/album","/luna/pc/me/collection/album/delete",
+    "/luna/pc/me/collection/mixed","/luna/me/collection/artist","/luna/me/playlist/media/sort",
+    "/luna/pc/me/follow","/luna/pc/me/unfollow","/luna/user/info"
   };
-  bool found=false; for(const char* p:allowed) if(endpoint==p) found=true; require(found);
+  bool found=false; for(const char* p:allowed) if(endpoint==p) found=true;
+  const std::string userPrefix="/luna/users/";
+  if(endpoint.compare(0,userPrefix.size(),userPrefix)==0) {
+    const auto id=endpoint.substr(userPrefix.size());
+    bool valid=!id.empty() && id.size()<=32;
+    for(char c:id) if(c<'0'||c>'9') valid=false;
+    if(valid) found=true;
+  }
+  require(found);
   size_t devices=0;
   for(size_t pos=q+1;pos<=r.url.size();) {
     size_t end=r.url.find('&',pos); if(end==std::string::npos) end=r.url.size();

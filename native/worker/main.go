@@ -126,7 +126,6 @@ type worker struct {
 	audio    *audioBridge
 	download func(context.Context, string) ([]byte, error)
 	decode   func(context.Context, []byte, string) ([]byte, error)
-	convert  func(context.Context, []byte) ([]byte, error)
 	sign     func(context.Context, signSpec) (map[string]string, error)
 }
 
@@ -134,7 +133,6 @@ func newWorker(root string) *worker {
 	w := &worker{root: root}
 	w.download = downloadGranted
 	w.decode = func(ctx context.Context, b []byte, a string) ([]byte, error) { return decodeResource(ctx, root, b, a) }
-	w.convert = func(ctx context.Context, b []byte) ([]byte, error) { return convertAAC(ctx, root, b) }
 	w.sign = func(ctx context.Context, s signSpec) (map[string]string, error) { return signRequest(ctx, root, s) }
 	return w
 }

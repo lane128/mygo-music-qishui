@@ -94,6 +94,13 @@ async function editablePlaylist(catalog, id, allowLiked = false) {
   return raw
 }
 
+async function playlistMutation(catalog, id, operation) {
+  const locks = (catalog.state ??= {}).playlistLocks ??= new Set()
+  if (locks.has(id)) throw error('unsupported')
+  locks.add(id)
+  try { return await operation() } finally { locks.delete(id) }
+}
+
 async function write(catalog, path, body) {
   // A mutation is issued exactly once, including on ambiguous transport errors.
   await catalog.request(path, { body, signed: true })
@@ -127,22 +134,31 @@ export async function createPlaylist(catalog, name) {
 export async function renamePlaylist(catalog, id, name) {
   idOf(id)
   name = nameOf(name)
-  await editablePlaylist(catalog, id)
-  await write(catalog, `${OWN_PATH}/update`, { playlist_id: id, name })
+  await playlistMutation(catalog, id, async () => {
+    await editablePlaylist(catalog, id)
+    await write(catalog, `${OWN_PATH}/update`, { playlist_id: id, name })
+  })
 }
 
 export async function deletePlaylist(catalog, id) {
   idOf(id)
-  await editablePlaylist(catalog, id)
-  await write(catalog, `${OWN_PATH}/delete`, { playlist_ids: [id] })
+  await playlistMutation(catalog, id, async () => {
+    await editablePlaylist(catalog, id)
+    await write(catalog, `${OWN_PATH}/delete`, { playlist_ids: [id] })
+    catalog.state.playlistOrder?.delete(id)
+  })
 }
 
 async function changePlaylist(catalog, id, trackIds, on) {
   idOf(id)
   const ids = idsOf(trackIds)
-  const raw = await editablePlaylist(catalog, id, true)
-  if (raw.type === 1) return collectMedia(catalog, ids, on)
-  await write(catalog, `${OWN_PATH}/media/${on ? 'append' : 'delete'}`, { playlist_id: id, media: mediaOf(ids) })
+  await playlistMutation(catalog, id, async () => {
+    const raw = await editablePlaylist(catalog, id, true)
+    // Even an ambiguous write may have changed the server list. Require a reload before reordering.
+    catalog.state.playlistOrder?.delete(id)
+    if (raw.type === 1) return collectMedia(catalog, ids, on)
+    await write(catalog, `${OWN_PATH}/media/${on ? 'append' : 'delete'}`, { playlist_id: id, media: mediaOf(ids) })
+  })
 }
 
 export async function addToPlaylist(catalog, id, trackIds) {
@@ -151,6 +167,28 @@ export async function addToPlaylist(catalog, id, trackIds) {
 
 export async function removeFromPlaylist(catalog, id, trackIds) {
   await changePlaylist(catalog, id, trackIds, false)
+}
+
+// The official SortPlaylistMedia contract uses /luna/me (no /pc alias) and the full desired order.
+export async function movePlaylistTrack(catalog, id, from, to) {
+  idOf(id)
+  if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < 0) throw error('response')
+  await playlistMutation(catalog, id, async () => {
+    const snapshots = catalog.state.playlistOrder
+    const before = snapshots?.get(id)
+    if (!before?.sortSafe || !Array.isArray(before.ids) || from >= before.ids.length || to >= before.ids.length) throw error('unsupported')
+    await editablePlaylist(catalog, id)
+    // Indices are meaningful only while the server still matches the list shown in MyGO.
+    await catalog.playlist(id)
+    const fresh = snapshots.get(id)
+    if (!fresh?.sortSafe || !Array.isArray(fresh.ids) || fresh.ids.length !== before.ids.length || fresh.ids.some((value, i) => value !== before.ids[i])) throw error('response')
+    if (from === to) return
+    const order = [...before.ids]
+    order.splice(to, 0, ...order.splice(from, 1))
+    snapshots.delete(id)
+    await write(catalog, '/luna/me/playlist/media/sort', { playlist_id: id, media: mediaOf(order) })
+    snapshots.set(id, { sortSafe: true, ids: order })
+  })
 }
 
 async function likedTracks(catalog) {

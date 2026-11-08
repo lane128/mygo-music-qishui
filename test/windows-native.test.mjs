@@ -12,7 +12,7 @@ async function fixture(t, respond) {
   t.after(() => rm(plugin, { recursive: true, force: true }))
   await mkdir(path.join(plugin, 'runtime/native'), { recursive: true })
   await mkdir(path.join(plugin, 'helper'))
-  for (const name of ['windows-runner.exe', 'ffmpeg.exe', 'bdms.node', 'metasecml.dll']) await writeFile(path.join(plugin, 'runtime/native', name), 'fixture-' + name)
+  for (const name of ['windows-runner.exe', 'bdms.node', 'metasecml.dll']) await writeFile(path.join(plugin, 'runtime/native', name), 'fixture-' + name)
   const node = path.join(plugin, 'fixture-node.exe')
   await writeFile(node, 'fixture-node')
   await writeFile(path.join(plugin, 'helper/resource.cjs'), '/* fixture decoder */')
@@ -75,23 +75,10 @@ test('Windows resource decoder uses the shipped source through private stdin', a
   await assert.rejects(access(f.calls[0].root))
 })
 
-test('Windows AAC conversion is local-only FLAC with bounded output and no second lossy encoding', async t => {
-  let input, args
-  const flac = Buffer.concat([Buffer.from('fLaC'), Buffer.alloc(64)])
-  const f = await fixture(t, async call => {
-    args = call.args
-    input = await readFile(path.join(call.root, 'input.m4a'))
-    await writeFile(path.join(call.root, 'output.flac'), flac)
-    return Buffer.alloc(0)
-  })
-  assert.deepEqual(await f.native.convertAAC(Buffer.from('aac-fixture')), flac)
-  assert.equal(input.toString(), 'aac-fixture')
-  assert.equal(args[args.indexOf('-protocol_whitelist') + 1], 'file,pipe')
-  assert.equal(args[args.indexOf('-c:a') + 1], 'flac')
-  assert.equal(args[args.indexOf('-bits_per_raw_sample') + 1], '24')
-  assert.equal(args[args.indexOf('-fs') + 1], String(128 * 1024 * 1024))
-  assert.equal(args.some(value => value.includes('libmp3lame')), false)
-  await assert.rejects(access(f.calls[0].root))
+test('Windows development adapter has no runtime conversion operation', async t => {
+  const f = await fixture(t, () => { throw Error('must not spawn') })
+  assert.deepEqual(Object.keys(f.native).sort(), ['decodeResource', 'signRequest'])
+  assert.equal(f.calls.length, 0)
 })
 
 test('Windows cancellation waits for launcher cleanup and removes private scratch', { timeout: 5000 }, async t => {
@@ -127,7 +114,7 @@ test('Windows isolation setup failures stay distinct from account or audio failu
   await assert.rejects(access(f.calls[0].root))
 })
 
-test('Windows refuses unsupported architectures, corrupt signer output and malformed converted output', async t => {
+test('Windows refuses unsupported architectures and corrupt signer output', async t => {
   const unsupported = createWindowsNative({ platform: 'win32', arch: 'ia32', spawnProcess: () => { throw Error('must not spawn') } })
   await assert.rejects(unsupported.signRequest(spec, 'code'), cause => cause.kind === 'setup')
   for (const output of ['private raw failure', JSON.stringify({ ...signatures, Extra: 'bad' }), JSON.stringify({ ...signatures, 'x-medusa': 'bad\r\nheader' })]) {
@@ -135,6 +122,4 @@ test('Windows refuses unsupported architectures, corrupt signer output and malfo
     await assert.rejects(f.native.signRequest(spec, 'code'), cause => cause.kind === 'unavailable' && !cause.message.includes('private raw failure'))
     await assert.rejects(access(f.calls[0].root))
   }
-  const f = await fixture(t, async call => { await writeFile(path.join(call.root, 'output.flac'), Buffer.alloc(100)); return Buffer.alloc(0) })
-  await assert.rejects(f.native.convertAAC(Buffer.from('aac')), cause => cause.kind === 'unavailable')
 })

@@ -9,6 +9,9 @@ import { HISTORY_ID, HISTORY_PATH, HISTORY_LIMIT, historyPlaylist } from './hist
 import * as Library from './library-actions.mjs'
 import { readComments, likeComment, postComment } from './comments.mjs'
 import { avatarURL } from './avatar.mjs'
+import { lyricsOf } from './lyrics.mjs'
+import * as Collections from './collections.mjs'
+export { normalizeLyrics } from './lyrics.mjs'
 
 const PAGE_SIZE = 20
 const idOf = value => {
@@ -41,19 +44,28 @@ export const libraryWritePaths = [
   '/luna/pc/me/collection/playlist', '/luna/pc/me/collection/playlist/delete',
   '/luna/pc/me/playlist/update', '/luna/pc/me/playlist/delete',
   '/luna/pc/me/playlist/media/append', '/luna/pc/me/playlist/media/delete',
+  '/luna/pc/me/collection/artist', '/luna/pc/me/collection/artist/delete',
+  '/luna/pc/me/collection/album', '/luna/pc/me/collection/album/delete',
+  '/luna/me/playlist/media/sort',
+  '/luna/pc/me/follow', '/luna/pc/me/unfollow',
 ]
-const paths = new Set([HISTORY_PATH, '/luna/pc/me/playlist', '/luna/pc/playlist/detail', '/luna/search/track', '/luna/pc/track_v2', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks', '/luna/pc/comments', ...libraryWritePaths])
+export const collectionReadPaths = ['/luna/me/collection/artist', '/luna/pc/me/collection/mixed', '/luna/user/info']
+const paths = new Set([HISTORY_PATH, '/luna/pc/me/playlist', '/luna/pc/playlist/detail', '/luna/search/track', '/luna/pc/track_v2', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks', '/luna/pc/comments', ...collectionReadPaths, ...libraryWritePaths])
 export async function requestJSON(session, path, { query = {}, body, signed = false, signal } = {}, deps = {}) {
   const artist = isPublicCatalogPath(path)
-  if (!paths.has(path) && !artist) throw error('response')
+  const userInfo = /^\/luna\/users\/\d{1,32}$/.test(path)
+  if (!paths.has(path) && !artist && !userInfo) throw error('response')
   // Verified public metadata routes never receive account credentials.
   if (artist && (body !== undefined || signed)) throw error('response')
   if (libraryWritePaths.includes(path) && (body === undefined || !signed)) throw error('response')
+  if ((collectionReadPaths.includes(path) || userInfo) && (body !== undefined || !signed)) throw error('response')
   if (path === '/luna/pc/me/playlist' && body !== undefined && !signed) throw error('response')
   if (path === '/luna/pc/comments' && (body !== undefined || !signed)) throw error('response')
   const cookies = validateSession(session)
   const params = signed || artist ? pcCatalogParams(session) : new URLSearchParams()
-  for (const [name, value] of new URLSearchParams(query)) params.set(name, value)
+  const supplied = new URLSearchParams(query)
+  for (const name of new Set(supplied.keys())) params.delete(name)
+  for (const [name, value] of supplied) params.append(name, value)
   const headers = { 'User-Agent': 'LunaPC/3.0.0(290101097)', Accept: 'application/json', ...(artist ? {} : { Cookie: cookies }) }
   let data
   if (body !== undefined) {
@@ -140,8 +152,11 @@ export function image(raw, suffix = '~c5_375x375.jpg') {
 }
 export function trackOf(raw) {
   if (!raw || (raw.name != null && typeof raw.name !== 'string') || !Number.isFinite(raw.duration ?? 0) || (raw.duration ?? 0) < 0) throw error('response')
+  const id = idOf(raw.id)
   return {
-    id: idOf(raw.id), name: raw.name || '', duration: raw.duration ?? 0,
+    id, name: raw.name || '', duration: raw.duration ?? 0,
+    // Verified official public song page; no per-track request or account/share token.
+    ...(/^\d{1,32}$/.test(id) ? { url: `https://music.douyin.com/qishui/share/track?track_id=${id}` } : {}),
     artists: (raw.artists || []).map(a => ({ id: a.id == null || a.id === '' ? '' : idOf(a.id), name: a.name || '' })),
     album: { id: raw.album?.id == null ? '' : idOf(raw.album.id), name: raw.album?.name || '', imageUrl: image(raw.album?.cover_url || raw.album?.url_cover) },
   }
@@ -262,15 +277,40 @@ export class Catalog {
   async playlists() {
     return [...(await this.libraryPlaylists()).map(raw => playlistOf(raw, this.session.account?.id)), historyPlaylist()]
   }
+  async profile() {
+    const account = this.session.account
+    if (!account?.id || typeof account.name !== 'string') throw error('session')
+    const playlists = (await this.libraryPlaylists()).map(raw => playlistOf(raw, account.id))
+    const mine = playlists.filter(list => list.mine)
+    const saved = playlists.filter(list => list.saved)
+    const other = playlists.filter(list => !list.mine && !list.saved)
+    return {
+      title: account.name,
+      ...(account.imageUrl ? { imageUrl: account.imageUrl } : {}),
+      sections: [
+        { title: '我的歌单', playlists: mine, empty: '还没有自己的歌单' },
+        { title: '收藏的歌单', playlists: saved, empty: '还没有收藏歌单' },
+        ...(other.length ? [{ title: '其他歌单', playlists: other }] : []),
+      ],
+    }
+  }
   like(id, on) { return Library.like(this, id, on) }
   liked(offset) { return Library.liked(this, offset) }
   isLiked(ids) { return ids?.length === 0 ? {} : Library.isLiked(this, ids) }
   savePlaylist(id, on) { return Library.savePlaylist(this, id, on) }
+  followArtist(id, on) { return Collections.followArtist(this, id, on) }
+  saveAlbum(id, on) { return Collections.saveAlbum(this, id, on) }
+  async savedAlbums(offset = 0) {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 25000) throw error('response')
+    const rows = await Collections.collectionList(this, 'album')
+    return { albums: rows.slice(offset, offset + 50).map(raw => ({ ...albumOf(raw), saved: true })), more: offset + 50 < rows.length }
+  }
   async createPlaylist(name) { const id = await Library.createPlaylist(this, name); return { id, name: name.trim(), mine: true } }
   renamePlaylist(id, name) { return Library.renamePlaylist(this, id, name) }
   deletePlaylist(id) { return Library.deletePlaylist(this, id) }
   addToPlaylist(id, trackIds) { return Library.addToPlaylist(this, id, trackIds) }
   removeFromPlaylist(id, trackIds) { return Library.removeFromPlaylist(this, id, trackIds) }
+  movePlaylistTrack(id, from, to) { return Library.movePlaylistTrack(this, id, from, to) }
   recent() { return this.history().then(page => page.tracks) }
   async commentOperation(trackId, operation) {
     catalogID(trackId)
@@ -347,17 +387,28 @@ export class Catalog {
     }
     const tracks = tracksOf(result.media_resources)
     if (result.has_more == null && !page.more && !cursor && (count > tracks.length || (tracks.length && count == null))) throw error('response')
-    return { playlist, tracks, ...page }
+    return { playlist, tracks, ...page, sortSafe: tracks.length === result.media_resources.length }
   }
   async playlist(id) {
     if (id === HISTORY_ID) return this.history()
     const tracks = new Map()
     const cursors = new Set([''])
+    const snapshots = this.state.playlistOrder ??= new Map()
+    const snapshot = { sortSafe: true, ids: null }
+    if (!snapshots.has(id)) while (snapshots.size >= 32) snapshots.delete(snapshots.keys().next().value)
+    snapshots.set(id, snapshot)
     let cursor = ''
     for (let count = 0; count < 500; count++) {
       const page = await this.playlistPage(id, cursor)
-      for (const track of page.tracks) tracks.set(track.id, track)
-      if (!page.more) return { ...page.playlist, tracks: [...tracks.values()] }
+      snapshot.sortSafe &&= page.sortSafe === true
+      for (const track of page.tracks) {
+        if (tracks.has(track.id)) snapshot.sortSafe = false
+        tracks.set(track.id, track)
+      }
+      if (!page.more) {
+        snapshot.ids = [...tracks.keys()]
+        return { ...page.playlist, tracks: [...tracks.values()] }
+      }
       if (cursors.has(page.cursor)) throw error('response')
       cursor = page.cursor
       cursors.add(cursor)
@@ -392,6 +443,7 @@ export class Catalog {
     const artist = artistOf(result.artist_info)
     if (artist.id !== id) throw error('response')
     const [tracks, albums] = await Promise.all([this.artistList(id, 'tracks'), this.artistList(id, 'albums')])
+    if (this.session.account) artist.following = await Collections.artistFollowing(this, result.artist_info)
     return { artist, tracks, albums }
   }
   async album(id) {
@@ -404,6 +456,7 @@ export class Catalog {
       const track = trackOf(raw)
       if (!tracks.has(track.id)) tracks.set(track.id, track)
     }
+    if (this.session.account) album.saved = (await Collections.collectionList(this, 'album')).some(row => row.id === id)
     return { album, tracks: [...tracks.values()] }
   }
   async suggest(query) {
@@ -596,7 +649,7 @@ export class Catalog {
     const lyric = result.lyric ?? result.seo_track?.lyric
     if (lyric != null) {
       if (typeof lyric !== 'object' || Array.isArray(lyric) || (lyric.content != null && typeof lyric.content !== 'string')) throw error('response')
-      if (typeof lyric.content === 'string') return { lrc: normalizeLyrics(lyric.content) }
+      if (typeof lyric.content === 'string') return lyricsOf(lyric.content, lyric.translations?.cn)
     }
     if (!track?.id) throw error('response')
     return { lrc: '' }
@@ -612,17 +665,6 @@ function feedTracks(result) {
     tracks.set(track.id, track)
   }
   return [...tracks.values()]
-}
-export function normalizeLyrics(raw) {
-  // Preserve ordinary LRC too; the PC response uses [milliseconds,duration].
-  return raw.split('\n').flatMap(line => {
-    line = line.trim()
-    const match = /^\[(\d+),(\d+)\](.*)$/.exec(line)
-    if (!match) return /^\[\d+:\d+(?:\.\d+)?\]/.test(line) ? [line] : []
-    const ms = Number(match[1])
-    if (!Number.isSafeInteger(ms)) return []
-    return [`[${String(Math.floor(ms / 60000)).padStart(2, '0')}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}.${String(Math.floor(ms % 1000 / 10)).padStart(2, '0')}]${match[3].replace(/<[^>]*>/g, '')}`]
-  }).join('\n')
 }
 function androidSearchParams(session, uuid) {
   return new URLSearchParams({

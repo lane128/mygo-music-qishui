@@ -30,7 +30,7 @@ func TestQishuiDarwinAMD64PackageInstall(t *testing.T) {
 			if files, err := filepath.Glob(filepath.Join(installed, "bin", "node*")); err != nil || len(files) != 0 {
 				t.Fatal("ZIP must not include Node")
 			}
-			images := []string{"bin/qishui-helper-darwin-amd64", "runtime/native/qishui-sign", "runtime/native/bdms.node", "runtime/native/libMetaSecML.dylib", "runtime/native/ffmpeg"}
+			images := []string{"bin/qishui-helper-darwin-amd64", "runtime/native/qishui-sign", "runtime/native/bdms.node", "runtime/native/libMetaSecML.dylib"}
 			if kind.name == "validation" {
 				images = append(images, "test/native-worker.test")
 				for _, name := range []string{"test/fixtures/aac-lc.m4a", "test/fixtures/aac-he.m4a", "test/fixtures/aac-hev2.m4a"} {
@@ -66,9 +66,21 @@ func TestQishuiDarwinAMD64PackageInstall(t *testing.T) {
 					}
 				}
 			}
-			for _, name := range []string{"LICENSE", "NOTICE.md", "src/plugin.mjs", "native/signer/signer.cpp", "native/signer/include/NODE-LICENSE", "native/worker/go.mod", "runtime/native/GO-LICENSE", "runtime/native/NATIVE-BUILD.json", "runtime/native/SOURCES.json", "runtime/native/FFMPEG-LICENSE", "runtime/native/FFMPEG-BUILD.json", "runtime/native/FFMPEG-SOURCE.tar.xz", "scripts/build-ffmpeg.mjs", "scripts/ffmpeg-config.mjs"} {
+			for _, name := range []string{"LICENSE", "NOTICE.md", "src/plugin.mjs", "helper/m4a.mjs", "native/signer/signer.cpp", "native/signer/include/NODE-LICENSE", "native/worker/go.mod", "runtime/native/GO-LICENSE", "runtime/native/NATIVE-BUILD.json", "runtime/native/SOURCES.json"} {
 				if info, err := os.Stat(filepath.Join(installed, name)); err != nil || info.Size() == 0 {
 					t.Fatal("missing license, source or provenance", name)
+				}
+			}
+			for _, name := range []string{"runtime/native/ffmpeg", "runtime/native/FFMPEG-LICENSE", "runtime/native/FFMPEG-README.txt", "runtime/native/FFMPEG-BUILD.json", "runtime/native/FFMPEG-SOURCE.tar.xz"} {
+				if _, err := os.Stat(filepath.Join(installed, name)); !os.IsNotExist(err) {
+					t.Fatal("ZIP must not contain bundled FFmpeg assets", name)
+				}
+			}
+			if kind.name == "validation" {
+				for _, name := range []string{"scripts/build-ffmpeg.mjs", "scripts/ffmpeg-config.mjs"} {
+					if info, err := os.Stat(filepath.Join(installed, name)); err != nil || info.Size() == 0 {
+						t.Fatal("validation ZIP lost offline FFmpeg reference tooling", name)
+					}
 				}
 			}
 			data, err := os.ReadFile(filepath.Join(installed, "runtime/native/NATIVE-BUILD.json"))

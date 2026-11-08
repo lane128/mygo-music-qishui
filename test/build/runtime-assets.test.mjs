@@ -1,12 +1,25 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkDigest, checkWindowsPE, inspectWindowsAudio, inspectDarwinAudio, packageTarget } from '../../scripts/runtime-assets.mjs'
+import { DARWIN_AMD64_FILES, DARWIN_FILES, WINDOWS_FILES, checkDigest, checkWindowsPE, inspectWindowsAudio, inspectDarwinAudio, packageTarget, darwinAssets } from '../../scripts/runtime-assets.mjs'
 import { extractSelected, prepareWindows } from '../../scripts/prepare-windows.mjs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+
+// FFmpeg is reference tooling, not a runtime asset: manifests must not require
+// its executable, licenses or corresponding source from package inputs.
+test('runtime asset manifests omit bundled FFmpeg binaries, source and licenses', () => {
+  assert.deepEqual(Object.keys(WINDOWS_FILES).sort(), ['bdms.node', 'metasecml.dll'])
+  assert.deepEqual(darwinAssets('arm64'), { files: DARWIN_FILES })
+  assert.deepEqual(darwinAssets('amd64'), { files: DARWIN_AMD64_FILES })
+  for (const name of Object.keys(WINDOWS_FILES)) assert.doesNotMatch(name, /ffmpeg|FFMPEG|MINGW|ZIG|CRT/)
+  for (const assets of [darwinAssets('arm64'), darwinAssets('amd64')]) {
+    assert.equal(Object.hasOwn(assets, 'ffmpeg'), false)
+    for (const name of Object.keys(assets.files)) assert.doesNotMatch(name, /ffmpeg/i)
+  }
+})
 
 // A 32-bit or wrong-platform binary must never enter an amd64 plugin ZIP.
 test('Windows package validation accepts supported hosts and enforces each PE architecture', () => {
@@ -104,6 +117,6 @@ test('runtime downloads fail closed on changed archives and refuse existing outp
     await writeFile(path.join(directory, 'existing/keep.txt'), 'keep')
     await assert.rejects(prepareWindows(path.join(directory, 'existing'), { fetcher: () => { throw Error('must not fetch') } }), /empty/)
     assert.equal(await readFile(path.join(directory, 'existing/keep.txt'), 'utf8'), 'keep')
-    await assert.rejects(prepareWindows(path.join(directory, 'fresh'), { ffmpegDirectory: directory, fetcher: async () => new Response('changed archive') }), /checksum/)
+    await assert.rejects(prepareWindows(path.join(directory, 'fresh'), { fetcher: async () => new Response('changed archive') }), /checksum/)
   } finally { await rm(directory, { recursive: true, force: true }) }
 })

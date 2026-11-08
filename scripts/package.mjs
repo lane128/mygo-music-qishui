@@ -1,10 +1,9 @@
 // Complete native platform packages; no runtime downloads or user-installed dependencies.
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { zipSync } from 'fflate'
 import path from 'node:path'
-import { darwinAssets, DARWIN_AMD64_DOWNLOAD, WINDOWS_FILES, WINDOWS_FFMPEG_FILES, WINDOWS_SOURCES, checkDigest, checkWindowsPE, inspectWindowsAudio, inspectDarwinAudio, packageTarget, sha256 } from './runtime-assets.mjs'
+import { darwinAssets, DARWIN_AMD64_DOWNLOAD, WINDOWS_FILES, WINDOWS_DOWNLOADS, checkDigest, checkWindowsPE, packageTarget, sha256 } from './runtime-assets.mjs'
 import { checkPackageLayout, copyPackageSource } from './package-layout.mjs'
 import { buildNative, goCommand } from './build-native.mjs'
 
@@ -23,16 +22,6 @@ for (const [name, hash] of Object.entries(expected)) {
   const bytes = await readFile(path.join(inputs, name))
   checkDigest(bytes, hash, name)
   if (target.windows && /\.(?:exe|dll|node)$/.test(name)) checkWindowsPE(bytes, name)
-  if (target.windows && name === 'ffmpeg.exe') inspectWindowsAudio(bytes)
-}
-const macAudio = (target.arch === 'amd64' ? process.env.QISHUI_DARWIN_AMD64_FFMPEG_DIR : undefined) || process.env.QISHUI_FFMPEG_DIR
-if (!target.windows) {
-  if (!macAudio || !path.isAbsolute(macAudio)) throw new Error('Build requires QISHUI_FFMPEG_DIR with the pinned macOS audio-only FFmpeg build.')
-  if (!Object.keys(macAssets.ffmpeg).length) throw new Error('No pinned FFmpeg assets for macOS ' + target.arch)
-  for (const [name, hash] of Object.entries(macAssets.ffmpeg)) checkDigest(await readFile(path.join(macAudio, name)), hash, name)
-  inspectDarwinAudio(await readFile(path.join(macAudio, 'ffmpeg')), target.arch)
-  const signature = spawnSync('/usr/bin/codesign', ['--verify', '--strict', path.join(macAudio, 'ffmpeg')], { encoding: 'utf8' })
-  if (signature.error || signature.status !== 0) throw new Error('macOS FFmpeg signature verification failed')
 }
 const manifest = JSON.parse(await readFile(path.join(root, 'plugin.json'), 'utf8'))
 await mkdir(path.join(root, 'dist'), { recursive: true })
@@ -51,8 +40,8 @@ try {
   if (!goLicense) throw new Error('Go distribution license is required')
   await writeFile(path.join(native, 'GO-LICENSE'), goLicense)
   if (target.windows) {
-    for (const name of ['bdms.node', 'metasecml.dll', ...Object.keys(WINDOWS_FFMPEG_FILES)]) await cp(path.join(inputs, name), path.join(native, name))
-    await writeFile(path.join(native, 'SOURCES.json'), JSON.stringify(WINDOWS_SOURCES, null, 2) + '\n')
+    for (const name of Object.keys(WINDOWS_FILES)) await cp(path.join(inputs, name), path.join(native, name))
+    await writeFile(path.join(native, 'SOURCES.json'), JSON.stringify(WINDOWS_DOWNLOADS, null, 2) + '\n')
     const runner = path.join(native, 'windows-runner.exe')
     goCommand(runnerModule, target, ['build', '-trimpath', '-buildvcs=false', '-ldflags=-s -w', '-o', runner, '.'])
     const bytes = await readFile(runner)
@@ -61,7 +50,6 @@ try {
     await cp(path.join(goCommand(runnerModule, target, ['list', '-m', '-f', '{{.Dir}}', 'golang.org/x/sys']), 'LICENSE'), path.join(native, 'X-SYS-LICENSE'))
   } else {
     for (const name of Object.keys(macAssets.files)) await cp(path.join(inputs, name), path.join(native, name))
-    for (const name of Object.keys(macAssets.ffmpeg)) await cp(path.join(macAudio, name), path.join(native, name))
     if (target.arch === 'amd64') await writeFile(path.join(native, 'SOURCES.json'), JSON.stringify([DARWIN_AMD64_DOWNLOAD], null, 2) + '\n')
   }
   async function archive(suffix) {

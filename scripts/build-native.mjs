@@ -42,7 +42,7 @@ export async function buildNative(destination, { target: name, zig = process.env
   const images = { [workerName]: await readFile(worker), ['qishui-sign' + extension]: await readFile(signer) }
   if (target.windows) for (const [name, bytes] of Object.entries(images)) checkWindowsPE(bytes, name, name === workerName ? target.arch : signerArch)
   const metadata = Object.fromEntries(Object.entries(images).map(([name, bytes]) => [name, sha256(bytes)]))
-  await writeFile(path.join(native, 'NATIVE-BUILD.json'), JSON.stringify({ platform: target.platform, arch: target.arch, signerArch, runtime: 'native; no Node executable', ...(target.windows && target.arch === 'arm64' ? { minimumWindows: '11', emulation: 'x64 signing and audio subprocesses' } : {}), images: metadata }, null, 2) + '\n', { flag: 'wx' })
+  await writeFile(path.join(native, 'NATIVE-BUILD.json'), JSON.stringify({ platform: target.platform, arch: target.arch, signerArch, runtime: 'native; no Node executable', ...(target.windows && target.arch === 'arm64' ? { minimumWindows: '11', emulation: 'x64 signing subprocess' } : {}), images: metadata }, null, 2) + '\n', { flag: 'wx' })
   return { target, worker, signer, images: metadata }
 }
 const entry = process.argv[1] && path.resolve(process.argv[1])

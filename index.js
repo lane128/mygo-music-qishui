@@ -372,6 +372,16 @@ async function editablePlaylist(catalog, id, allowLiked = false) {
   if (!raw || raw.owner?.id !== accountOf(catalog) || !(ordinaryTypes.has(raw.type) || allowLiked && raw.type === 1)) throw error("unsupported");
   return raw;
 }
+async function playlistMutation(catalog, id, operation) {
+  const locks = (catalog.state ??= {}).playlistLocks ??= /* @__PURE__ */ new Set();
+  if (locks.has(id)) throw error("unsupported");
+  locks.add(id);
+  try {
+    return await operation();
+  } finally {
+    locks.delete(id);
+  }
+}
 async function write(catalog, path, body) {
   await catalog.request(path, { body, signed: true });
 }
@@ -398,26 +408,53 @@ async function createPlaylist(catalog, name) {
 async function renamePlaylist(catalog, id, name) {
   idOf(id);
   name = nameOf(name);
-  await editablePlaylist(catalog, id);
-  await write(catalog, `${OWN_PATH}/update`, { playlist_id: id, name });
+  await playlistMutation(catalog, id, async () => {
+    await editablePlaylist(catalog, id);
+    await write(catalog, `${OWN_PATH}/update`, { playlist_id: id, name });
+  });
 }
 async function deletePlaylist(catalog, id) {
   idOf(id);
-  await editablePlaylist(catalog, id);
-  await write(catalog, `${OWN_PATH}/delete`, { playlist_ids: [id] });
+  await playlistMutation(catalog, id, async () => {
+    await editablePlaylist(catalog, id);
+    await write(catalog, `${OWN_PATH}/delete`, { playlist_ids: [id] });
+    catalog.state.playlistOrder?.delete(id);
+  });
 }
 async function changePlaylist(catalog, id, trackIds, on) {
   idOf(id);
   const ids = idsOf(trackIds);
-  const raw = await editablePlaylist(catalog, id, true);
-  if (raw.type === 1) return collectMedia(catalog, ids, on);
-  await write(catalog, `${OWN_PATH}/media/${on ? "append" : "delete"}`, { playlist_id: id, media: mediaOf(ids) });
+  await playlistMutation(catalog, id, async () => {
+    const raw = await editablePlaylist(catalog, id, true);
+    catalog.state.playlistOrder?.delete(id);
+    if (raw.type === 1) return collectMedia(catalog, ids, on);
+    await write(catalog, `${OWN_PATH}/media/${on ? "append" : "delete"}`, { playlist_id: id, media: mediaOf(ids) });
+  });
 }
 async function addToPlaylist(catalog, id, trackIds) {
   await changePlaylist(catalog, id, trackIds, true);
 }
 async function removeFromPlaylist(catalog, id, trackIds) {
   await changePlaylist(catalog, id, trackIds, false);
+}
+async function movePlaylistTrack(catalog, id, from, to) {
+  idOf(id);
+  if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from < 0 || to < 0) throw error("response");
+  await playlistMutation(catalog, id, async () => {
+    const snapshots = catalog.state.playlistOrder;
+    const before = snapshots?.get(id);
+    if (!before?.sortSafe || !Array.isArray(before.ids) || from >= before.ids.length || to >= before.ids.length) throw error("unsupported");
+    await editablePlaylist(catalog, id);
+    await catalog.playlist(id);
+    const fresh = snapshots.get(id);
+    if (!fresh?.sortSafe || !Array.isArray(fresh.ids) || fresh.ids.length !== before.ids.length || fresh.ids.some((value, i) => value !== before.ids[i])) throw error("response");
+    if (from === to) return;
+    const order = [...before.ids];
+    order.splice(to, 0, ...order.splice(from, 1));
+    snapshots.delete(id);
+    await write(catalog, "/luna/me/playlist/media/sort", { playlist_id: id, media: mediaOf(order) });
+    snapshots.set(id, { sortSafe: true, ids: order });
+  });
 }
 async function likedTracks(catalog) {
   const lists = (await ownPlaylists(catalog)).filter((raw) => raw.type === 1 && raw.owner?.id === accountOf(catalog));
@@ -592,6 +629,232 @@ async function postComment(request, { trackId, text, account: account2 }) {
   return { id, author, ...avatarUrl ? { avatarUrl } : {}, text };
 }
 
+// helper/lyrics.mjs
+var DAY = 864e5;
+var stripTiming = (text) => text.replace(/<[^>]*>/g, "");
+var time = (value) => Number.isSafeInteger(value) && value >= 0 && value <= DAY;
+function normalizeLyrics(raw) {
+  return raw.split("\n").flatMap((line) => {
+    line = line.trim();
+    const match = /^\[(\d+),(\d+)\](.*)$/.exec(line);
+    if (!match) {
+      const stamps = [...line.matchAll(/\[(\d+):(\d+)(?:[.:](\d+))?\]/g)];
+      if (!stamps.length || stamps[0].index !== 0 || stamps.some((stamp) => !time(Math.round(Number(stamp[1]) * 6e4 + Number(stamp[2]) * 1e3 + (stamp[3] ? Number("0." + stamp[3]) * 1e3 : 0))))) return [];
+      return [line];
+    }
+    const ms = Number(match[1]);
+    if (!time(ms)) return [];
+    return [`[${String(Math.floor(ms / 6e4)).padStart(2, "0")}:${String(Math.floor(ms / 1e3) % 60).padStart(2, "0")}.${String(Math.floor(ms % 1e3 / 10)).padStart(2, "0")}]${stripTiming(match[3])}`];
+  }).join("\n");
+}
+function wordsOf(body, start, end) {
+  const words = [];
+  let covered = 0, previous = start;
+  for (const match of body.matchAll(/<(\d+),(\d+),(\d+)>([^<]*)/g)) {
+    if (match.index !== covered) return void 0;
+    const offset = Number(match[1]), duration = Number(match[2]);
+    const at = start + offset, until = at + duration;
+    if (!time(offset) || !time(duration) || !time(at) || !time(until) || duration === 0 || at < previous || until > end || !match[4]) return void 0;
+    const characters = [...match[4]];
+    if (duration < characters.length) return void 0;
+    for (let i = 0; i < characters.length; i++) words.push({
+      start: Math.round(at + duration * i / characters.length),
+      end: Math.round(at + duration * (i + 1) / characters.length),
+      text: characters[i]
+    });
+    previous = at;
+    covered += match[0].length;
+  }
+  return covered === body.length && words.length ? words : void 0;
+}
+function lyricsOf(raw, chineseTranslation) {
+  const lrc = normalizeLyrics(raw);
+  const lines = [];
+  const translated = typeof chineseTranslation === "string" ? chineseTranslation.split("\n") : [];
+  let wordTiming = false, hasTranslation = false;
+  for (const [index, line] of raw.split("\n").map((line2) => line2.trim()).filter(Boolean).entries()) {
+    const translatedText = /^(?:\[[^\]]+\])+(.*)$/.exec(translated[index] ?? "")?.[1]?.trim();
+    const translationOf = (text2) => {
+      if (!translatedText || translatedText === text2.trim()) return {};
+      hasTranslation = true;
+      return { translation: translatedText };
+    };
+    const match = /^\[(\d+),(\d+)\](.*)$/.exec(line);
+    if (match) {
+      const start = Number(match[1]), duration = Number(match[2]), end = start + duration;
+      const text2 = stripTiming(match[3]);
+      if (!time(start) || !time(duration) || !time(end) || !text2.trim()) continue;
+      const words = wordsOf(match[3], start, end);
+      if (words) wordTiming = true;
+      lines.push({ start, ...duration > 0 ? { end } : {}, text: text2, ...translationOf(text2), ...words ? { words } : {} });
+      continue;
+    }
+    const stamps = [...line.matchAll(/\[(\d+):(\d+)(?:[.:](\d+))?\]/g)];
+    if (!stamps.length || stamps[0].index !== 0) continue;
+    const last = stamps.at(-1), text = line.slice(last.index + last[0].length);
+    if (!text.trim()) continue;
+    for (const stamp of stamps) {
+      const start = Number(stamp[1]) * 6e4 + Number(stamp[2]) * 1e3 + (stamp[3] ? Number("0." + stamp[3]) * 1e3 : 0);
+      if (time(Math.round(start))) lines.push({ start: Math.round(start), text, ...translationOf(text) });
+    }
+  }
+  return { lrc, ...wordTiming || hasTranslation ? { lines: lines.sort((a, b) => a.start - b.start) } : {} };
+}
+
+// helper/collections.mjs
+var validID2 = (id) => typeof id === "string" && /^\d{1,32}$/.test(id);
+var object2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+var routes = {
+  artist: { path: "/luna/me/collection/artist", field: "artists" },
+  album: { path: "/luna/pc/me/collection/mixed", field: "mixed_collections" }
+};
+function accountOf2(catalog) {
+  const id = catalog.session?.account?.id;
+  if (!validID2(id)) throw error("session");
+  return id;
+}
+function cacheOf(catalog) {
+  return catalog.state.collections ??= /* @__PURE__ */ new Map();
+}
+async function collectionList(catalog, kind) {
+  const route = routes[kind];
+  if (!route) throw error("response");
+  const account2 = accountOf2(catalog), cache = cacheOf(catalog);
+  const existing = cache.get(kind);
+  if (existing && existing.account === account2 && (existing.pending || Date.now() - existing.loadedAt < 3e4)) return existing.pending || existing.rows;
+  const entry = { account: account2 };
+  cache.set(kind, entry);
+  entry.pending = (async () => {
+    const rows = /* @__PURE__ */ new Map(), cursors = /* @__PURE__ */ new Set([""]);
+    let cursor = "", total = 0;
+    for (let page = 0; page < 500; page++) {
+      const query = new URLSearchParams({ cursor, count: "50" });
+      if (kind === "album") {
+        query.append("item_types", "album");
+        query.append("item_types", "playlist");
+      }
+      const result = await catalog.request(route.path, { query, signed: true });
+      if (!object2(result) || result.has_more != null && typeof result.has_more !== "boolean") throw error("response");
+      let items = result[route.field];
+      const emptyMixed = kind === "album" && object2(result.status_info) && result.total_num == null;
+      if (items == null && result.has_more !== true && (result.total_num === 0 || result.status_code === 0 || result.status_info?.code === 0 || emptyMixed)) items = [];
+      if (!Array.isArray(items) || (total += items.length) > 25e3) throw error("response");
+      for (const item of items) {
+        if (!object2(item)) throw error("response");
+        if (kind === "album" && item.item_type !== "album") continue;
+        const row = kind === "album" ? item.album : item;
+        if (!object2(row) || !validID2(row.id)) throw error("response");
+        rows.set(row.id, row);
+      }
+      if (accountOf2(catalog) !== account2) throw error("session");
+      if (cache.get(kind) !== entry) throw error("response");
+      if (result.has_more !== true) {
+        entry.rows = [...rows.values()];
+        entry.loadedAt = Date.now();
+        return entry.rows;
+      }
+      const next = result.next_cursor;
+      if (typeof next !== "string" || !next || next.length > 8192 || /[\x00-\x1f\x7f]/.test(next) || cursors.has(next)) throw error("response");
+      cursor = next;
+      cursors.add(cursor);
+    }
+    throw error("response");
+  })();
+  try {
+    return await entry.pending;
+  } catch (failure) {
+    if (cache.get(kind) === entry) cache.delete(kind);
+    throw failure;
+  } finally {
+    entry.pending = null;
+  }
+}
+function userID(value) {
+  const id = typeof value === "number" && Number.isSafeInteger(value) ? String(value) : value;
+  if (!validID2(id)) throw error("response");
+  return id;
+}
+function artistTarget(raw, id = raw?.id) {
+  if (!object2(raw) || !validID2(id) || raw.id !== id) throw error("response");
+  if (raw.user_artist_type === 2) {
+    return { kind: "user", id: userID(raw.user?.id) };
+  }
+  if (raw.user_artist_type != null && raw.user_artist_type !== 1) throw error("unsupported");
+  return { kind: "artist", id };
+}
+function followed(status) {
+  if (!Number.isInteger(status) || status < 0 || status > 7) throw error("response");
+  return ![0, 3].includes(status);
+}
+function checkAccount(catalog, account2) {
+  if (accountOf2(catalog) !== account2) throw error("session");
+  if (catalog.signal?.aborted) throw error("canceled");
+}
+async function artistFollowing(catalog, raw) {
+  const account2 = accountOf2(catalog);
+  const target = artistTarget(raw);
+  if (target.kind === "artist") return (await collectionList(catalog, "artist")).some((row) => row.id === target.id);
+  const result = await catalog.request(`/luna/users/${target.id}`, { signed: true, query: { user_id: target.id, sec_uid: "" } });
+  checkAccount(catalog, account2);
+  if (!object2(result) || userID(result.user?.id) !== target.id) throw error("response");
+  return followed(result.my_user_state?.follow_status);
+}
+async function collect(catalog, kind, id, on) {
+  if (!validID2(id) || typeof on !== "boolean") throw error("response");
+  const account2 = accountOf2(catalog);
+  const locks = catalog.state.collectionLocks ??= /* @__PURE__ */ new Set();
+  const key = kind + ":" + id;
+  if (locks.has(key)) throw error("unsupported");
+  locks.add(key);
+  const cache = cacheOf(catalog);
+  let invalidated = false;
+  try {
+    let target;
+    if (kind === "artist") {
+      const detail = await catalog.request(`/luna/pc/artists/${id}`, { query: { locate_item_id: "" } });
+      target = artistTarget(detail?.artist_info, id);
+    }
+    checkAccount(catalog, account2);
+    const user = target?.kind === "user";
+    if (!user) {
+      cache.delete(kind);
+      invalidated = true;
+    }
+    const result = await catalog.request(user ? `/luna/pc/me/${on ? "follow" : "unfollow"}` : `/luna/pc/me/collection/${kind}${on ? "" : "/delete"}`, {
+      signed: true,
+      body: user ? { user_id: target.id } : { [kind === "artist" ? "artist_ids" : "album_ids"]: [id] }
+    });
+    checkAccount(catalog, account2);
+    if (!object2(result)) throw error("response");
+    if (user) {
+      if (result.user_id != null && userID(result.user_id) !== target.id) throw error("response");
+      if (followed(result.follow_status) !== on) throw error("rejected");
+      return;
+    }
+    if (kind === "artist") {
+      const statuses = on ? result.collect_artist_status : result.deleted_artist_status;
+      if (statuses != null) {
+        if (!object2(statuses)) throw error("response");
+        const status = statuses[id];
+        if (status != null) {
+          if (followed(status) !== on) throw error("rejected");
+        }
+      }
+    }
+    const ids = kind === "artist" ? on ? result.artist_ids : result.deleted_artists : on ? result.collected_albums : result.deleted_albums;
+    if (ids != null && (!Array.isArray(ids) || !ids.includes(id))) throw error("response");
+  } finally {
+    if (invalidated) cache.delete(kind);
+    locks.delete(key);
+  }
+}
+function followArtist(catalog, id, on) {
+  return collect(catalog, "artist", id, on);
+}
+function saveAlbum(catalog, id, on) {
+  return collect(catalog, "album", id, on);
+}
+
 // helper/catalog-core.mjs
 var PAGE_SIZE3 = 20;
 var idOf3 = (value) => {
@@ -641,19 +904,31 @@ var libraryWritePaths = [
   "/luna/pc/me/playlist/update",
   "/luna/pc/me/playlist/delete",
   "/luna/pc/me/playlist/media/append",
-  "/luna/pc/me/playlist/media/delete"
+  "/luna/pc/me/playlist/media/delete",
+  "/luna/pc/me/collection/artist",
+  "/luna/pc/me/collection/artist/delete",
+  "/luna/pc/me/collection/album",
+  "/luna/pc/me/collection/album/delete",
+  "/luna/me/playlist/media/sort",
+  "/luna/pc/me/follow",
+  "/luna/pc/me/unfollow"
 ];
-var paths = /* @__PURE__ */ new Set([HISTORY_PATH, "/luna/pc/me/playlist", "/luna/pc/playlist/detail", "/luna/search/track", "/luna/pc/track_v2", "/luna/pc/feed/mode", "/luna/pc/feed/song-tab", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/comments", ...libraryWritePaths]);
+var collectionReadPaths = ["/luna/me/collection/artist", "/luna/pc/me/collection/mixed", "/luna/user/info"];
+var paths = /* @__PURE__ */ new Set([HISTORY_PATH, "/luna/pc/me/playlist", "/luna/pc/playlist/detail", "/luna/search/track", "/luna/pc/track_v2", "/luna/pc/feed/mode", "/luna/pc/feed/song-tab", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/comments", ...collectionReadPaths, ...libraryWritePaths]);
 async function requestJSON(session, path, { query = {}, body, signed = false, signal } = {}, deps = {}) {
   const artist2 = isPublicCatalogPath(path);
-  if (!paths.has(path) && !artist2) throw error("response");
+  const userInfo = /^\/luna\/users\/\d{1,32}$/.test(path);
+  if (!paths.has(path) && !artist2 && !userInfo) throw error("response");
   if (artist2 && (body !== void 0 || signed)) throw error("response");
   if (libraryWritePaths.includes(path) && (body === void 0 || !signed)) throw error("response");
+  if ((collectionReadPaths.includes(path) || userInfo) && (body !== void 0 || !signed)) throw error("response");
   if (path === "/luna/pc/me/playlist" && body !== void 0 && !signed) throw error("response");
   if (path === "/luna/pc/comments" && (body !== void 0 || !signed)) throw error("response");
   const cookies = validateSession(session);
   const params = signed || artist2 ? pcCatalogParams(session) : new URLSearchParams();
-  for (const [name, value] of new URLSearchParams(query)) params.set(name, value);
+  const supplied = new URLSearchParams(query);
+  for (const name of new Set(supplied.keys())) params.delete(name);
+  for (const [name, value] of supplied) params.append(name, value);
   const headers = { "User-Agent": "LunaPC/3.0.0(290101097)", Accept: "application/json", ...artist2 ? {} : { Cookie: cookies } };
   let data;
   if (body !== void 0) {
@@ -749,10 +1024,13 @@ function image(raw, suffix = "~c5_375x375.jpg") {
 }
 function trackOf(raw) {
   if (!raw || raw.name != null && typeof raw.name !== "string" || !Number.isFinite(raw.duration ?? 0) || (raw.duration ?? 0) < 0) throw error("response");
+  const id = idOf3(raw.id);
   return {
-    id: idOf3(raw.id),
+    id,
     name: raw.name || "",
     duration: raw.duration ?? 0,
+    // Verified official public song page; no per-track request or account/share token.
+    .../^\d{1,32}$/.test(id) ? { url: `https://music.douyin.com/qishui/share/track?track_id=${id}` } : {},
     artists: (raw.artists || []).map((a) => ({ id: a.id == null || a.id === "" ? "" : idOf3(a.id), name: a.name || "" })),
     album: { id: raw.album?.id == null ? "" : idOf3(raw.album.id), name: raw.album?.name || "", imageUrl: image(raw.album?.cover_url || raw.album?.url_cover) }
   };
@@ -861,6 +1139,23 @@ var Catalog = class {
   async playlists() {
     return [...(await this.libraryPlaylists()).map((raw) => playlistOf(raw, this.session.account?.id)), historyPlaylist()];
   }
+  async profile() {
+    const account2 = this.session.account;
+    if (!account2?.id || typeof account2.name !== "string") throw error("session");
+    const playlists2 = (await this.libraryPlaylists()).map((raw) => playlistOf(raw, account2.id));
+    const mine = playlists2.filter((list) => list.mine);
+    const saved = playlists2.filter((list) => list.saved);
+    const other = playlists2.filter((list) => !list.mine && !list.saved);
+    return {
+      title: account2.name,
+      ...account2.imageUrl ? { imageUrl: account2.imageUrl } : {},
+      sections: [
+        { title: "我的歌单", playlists: mine, empty: "还没有自己的歌单" },
+        { title: "收藏的歌单", playlists: saved, empty: "还没有收藏歌单" },
+        ...other.length ? [{ title: "其他歌单", playlists: other }] : []
+      ]
+    };
+  }
   like(id, on) {
     return like(this, id, on);
   }
@@ -872,6 +1167,17 @@ var Catalog = class {
   }
   savePlaylist(id, on) {
     return savePlaylist(this, id, on);
+  }
+  followArtist(id, on) {
+    return followArtist(this, id, on);
+  }
+  saveAlbum(id, on) {
+    return saveAlbum(this, id, on);
+  }
+  async savedAlbums(offset = 0) {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 25e3) throw error("response");
+    const rows = await collectionList(this, "album");
+    return { albums: rows.slice(offset, offset + 50).map((raw) => ({ ...albumOf(raw), saved: true })), more: offset + 50 < rows.length };
   }
   async createPlaylist(name) {
     const id = await createPlaylist(this, name);
@@ -888,6 +1194,9 @@ var Catalog = class {
   }
   removeFromPlaylist(id, trackIds) {
     return removeFromPlaylist(this, id, trackIds);
+  }
+  movePlaylistTrack(id, from, to) {
+    return movePlaylistTrack(this, id, from, to);
   }
   recent() {
     return this.history().then((page) => page.tracks);
@@ -966,17 +1275,28 @@ var Catalog = class {
     }
     const tracks = tracksOf(result.media_resources);
     if (result.has_more == null && !page.more && !cursor && (count > tracks.length || tracks.length && count == null)) throw error("response");
-    return { playlist: playlist2, tracks, ...page };
+    return { playlist: playlist2, tracks, ...page, sortSafe: tracks.length === result.media_resources.length };
   }
   async playlist(id) {
     if (id === HISTORY_ID) return this.history();
     const tracks = /* @__PURE__ */ new Map();
     const cursors = /* @__PURE__ */ new Set([""]);
+    const snapshots = this.state.playlistOrder ??= /* @__PURE__ */ new Map();
+    const snapshot = { sortSafe: true, ids: null };
+    if (!snapshots.has(id)) while (snapshots.size >= 32) snapshots.delete(snapshots.keys().next().value);
+    snapshots.set(id, snapshot);
     let cursor = "";
     for (let count = 0; count < 500; count++) {
       const page = await this.playlistPage(id, cursor);
-      for (const track of page.tracks) tracks.set(track.id, track);
-      if (!page.more) return { ...page.playlist, tracks: [...tracks.values()] };
+      snapshot.sortSafe &&= page.sortSafe === true;
+      for (const track of page.tracks) {
+        if (tracks.has(track.id)) snapshot.sortSafe = false;
+        tracks.set(track.id, track);
+      }
+      if (!page.more) {
+        snapshot.ids = [...tracks.keys()];
+        return { ...page.playlist, tracks: [...tracks.values()] };
+      }
       if (cursors.has(page.cursor)) throw error("response");
       cursor = page.cursor;
       cursors.add(cursor);
@@ -1011,6 +1331,7 @@ var Catalog = class {
     const artist2 = artistOf(result.artist_info);
     if (artist2.id !== id) throw error("response");
     const [tracks, albums] = await Promise.all([this.artistList(id, "tracks"), this.artistList(id, "albums")]);
+    if (this.session.account) artist2.following = await artistFollowing(this, result.artist_info);
     return { artist: artist2, tracks, albums };
   }
   async album(id) {
@@ -1023,6 +1344,7 @@ var Catalog = class {
       const track = trackOf(raw);
       if (!tracks.has(track.id)) tracks.set(track.id, track);
     }
+    if (this.session.account) album2.saved = (await collectionList(this, "album")).some((row) => row.id === id);
     return { album: album2, tracks: [...tracks.values()] };
   }
   async suggest(query) {
@@ -1227,7 +1549,7 @@ var Catalog = class {
     const lyric = result.lyric ?? result.seo_track?.lyric;
     if (lyric != null) {
       if (typeof lyric !== "object" || Array.isArray(lyric) || lyric.content != null && typeof lyric.content !== "string") throw error("response");
-      if (typeof lyric.content === "string") return { lrc: normalizeLyrics(lyric.content) };
+      if (typeof lyric.content === "string") return lyricsOf(lyric.content, lyric.translations?.cn);
     }
     if (!track?.id) throw error("response");
     return { lrc: "" };
@@ -1243,16 +1565,6 @@ function feedTracks(result) {
     tracks.set(track.id, track);
   }
   return [...tracks.values()];
-}
-function normalizeLyrics(raw) {
-  return raw.split("\n").flatMap((line) => {
-    line = line.trim();
-    const match = /^\[(\d+),(\d+)\](.*)$/.exec(line);
-    if (!match) return /^\[\d+:\d+(?:\.\d+)?\]/.test(line) ? [line] : [];
-    const ms = Number(match[1]);
-    if (!Number.isSafeInteger(ms)) return [];
-    return [`[${String(Math.floor(ms / 6e4)).padStart(2, "0")}:${String(Math.floor(ms / 1e3) % 60).padStart(2, "0")}.${String(Math.floor(ms % 1e3 / 10)).padStart(2, "0")}]${match[3].replace(/<[^>]*>/g, "")}`];
-  }).join("\n");
 }
 function androidSearchParams(session, uuid) {
   return new URLSearchParams({
@@ -1342,6 +1654,8 @@ async function closeMusic() {
   catalogState.search.clear();
   catalogState.comments.clear();
   catalogState.commentLocks.clear();
+  catalogState.collections?.clear();
+  catalogState.playlistOrder?.clear();
   catalogState = newCatalogState();
   feedStates.clear();
   discoveryPages.clear();
@@ -1561,6 +1875,7 @@ function authProfile(payload, commerce) {
   return {
     id: String(p.id),
     name: memberName(nickname, tier),
+    page: "my-library",
     imageUrl: image2(p.avatar_url) || image2(p.larger_avatar_url) || image2(p.medium_avatar_url, "~c5_300x300.jpg") || image2(p.thumb_avatar_url, "~c5_100x100.jpg") || image2(p.url_avatar, "~c5_300x300.jpg")
   };
 }
@@ -2001,6 +2316,9 @@ async function music(method, params = {}, persistent = false) {
       case "playlists":
         result = await catalog.playlists();
         break;
+      case "profile":
+        result = await catalog.profile();
+        break;
       case "playlist":
         result = await catalog.playlist(params.id);
         break;
@@ -2027,6 +2345,18 @@ async function music(method, params = {}, persistent = false) {
         break;
       case "savePlaylist":
         await catalog.savePlaylist(params.id, params.on);
+        break;
+      case "followArtist":
+        await catalog.followArtist(params.id, params.on);
+        break;
+      case "saveAlbum":
+        await catalog.saveAlbum(params.id, params.on);
+        break;
+      case "savedAlbums":
+        result = await catalog.savedAlbums(params.offset);
+        break;
+      case "movePlaylistTrack":
+        await catalog.movePlaylistTrack(params.id, params.from, params.to);
         break;
       case "createPlaylist":
         result = await catalog.createPlaylist(params.name);
@@ -2144,6 +2474,18 @@ async function like2({ id, on }) {
 async function savePlaylist2({ id, on }) {
   await music("savePlaylist", { id, on });
 }
+async function followArtist2({ id, on }) {
+  await music("followArtist", { id, on });
+}
+async function saveAlbum2({ id, on }) {
+  await music("saveAlbum", { id, on });
+}
+async function savedAlbums({ offset = 0 } = {}) {
+  return (await music("savedAlbums", { offset })).result;
+}
+async function movePlaylistTrack2({ id, from, to }) {
+  await music("movePlaylistTrack", { id, from, to });
+}
 async function createPlaylist2({ name }) {
   return (await music("createPlaylist", { name })).result;
 }
@@ -2244,6 +2586,7 @@ function discoveryResult(reply) {
   return result;
 }
 async function browse({ page }) {
+  if (page === "my-library") return (await music("profile")).result;
   if (page === "listening-modes" || page === "scene-modes") {
     const attempt = generation;
     const reply = await music("modePage", { page });
@@ -2300,12 +2643,14 @@ export {
   comments,
   createPlaylist2 as createPlaylist,
   deletePlaylist2 as deletePlaylist,
+  followArtist2 as followArtist,
   home,
   isLiked2 as isLiked,
   like2 as like,
   likeComment2 as likeComment,
   liked2 as liked,
   lyrics,
+  movePlaylistTrack2 as movePlaylistTrack,
   played,
   playlist,
   playlists,
@@ -2313,7 +2658,9 @@ export {
   recent,
   removeFromPlaylist2 as removeFromPlaylist,
   renamePlaylist2 as renamePlaylist,
+  saveAlbum2 as saveAlbum,
   savePlaylist2 as savePlaylist,
+  savedAlbums,
   search,
   signIn,
   signOut,

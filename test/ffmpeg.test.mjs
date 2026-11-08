@@ -9,8 +9,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { aacConversionArgs } from '../helper/ffmpeg-args.mjs'
 import { aacCases, comparePCM, referencePCM } from './fixtures/aac-cases.mjs'
-const ffmpeg = process.env.QISHUI_TEST_FFMPEG || (process.platform === 'win32' && process.env.QISHUI_TEST_WINDOWS === '1'
-  ? fileURLToPath(new URL('../runtime/native/ffmpeg.exe', import.meta.url)) : null)
+// Optional external reference only; no runtime package supplies a converter.
+const ffmpeg = process.env.QISHUI_TEST_FFMPEG || null
 function run(args) {
   return spawnSync(ffmpeg, args, { windowsHide: true, shell: false, encoding: 'utf8', timeout: 10000, maxBuffer: 2 * 1024 * 1024 })
 }

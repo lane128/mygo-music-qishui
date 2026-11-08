@@ -282,14 +282,17 @@ test('signs the final PC request and never exposes credentials to alternate host
 })
 
 // Public lyrics use no account headers, preserve ordinary LRC, and normalize the PC word timing.
-test('fetches public lyrics without account credentials and strips per-word timing', async () => {
+test('fetches public lyrics without account credentials and preserves per-word timing', async () => {
   const catalog = new Catalog(session, { publicFetch: async (url, opts) => {
     assert.equal(new URL(url).hostname, 'beta-luna.douyin.com')
     assert.equal(Object.keys(opts.headers).some(k => /cookie|helios|medusa/i.test(k)), false)
     assert.equal(opts.redirect, 'error')
     return wire({ seo_track: { track: { id: '123' } }, lyric: { content: '[61234,900]<0,10,0>你<10,30,0>好\n[01:04.20]世界' } })
   } })
-  assert.deepEqual(await catalog.lyrics('123'), { lrc: '[01:01.23]你好\n[01:04.20]世界' })
+  assert.deepEqual(await catalog.lyrics('123'), { lrc: '[01:01.23]你好\n[01:04.20]世界', lines: [
+    { start: 61234, end: 62134, text: '你好', words: [{ start: 61234, end: 61244, text: '你' }, { start: 61244, end: 61274, text: '好' }] },
+    { start: 64200, text: '世界' },
+  ] })
   assert.equal(normalizeLyrics('unrecognized'), '')
 })
 

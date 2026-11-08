@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { libraryWritePaths } from '../../helper/catalog-core.mjs'
+import { libraryWritePaths, collectionReadPaths } from '../../helper/catalog-core.mjs'
 
 export const paths = {
   playlists: '/luna/pc/me/playlist', playlist: '/luna/pc/playlist/detail', history: '/luna/pc/me/recently-played-media',
@@ -35,7 +35,7 @@ export function catalogService(routes, { platform = 'mac' } = {}) {
     assert.equal(parsed.hostname, parsed.pathname === paths.lyrics ? 'beta-luna.douyin.com' : 'api.qishui.com')
     if (parsed.pathname === paths.lyrics || artist) assert.equal(options.headers.Cookie, undefined)
     else assert.ok(options.headers.Cookie?.startsWith('sessionid='))
-    if (signed.has(parsed.pathname) || libraryWritePaths.includes(parsed.pathname) || parsed.pathname === '/luna/pc/comments' || (parsed.pathname === paths.playlists && (options.body != null || options.headers['x-helios'] != null))) {
+    if (signed.has(parsed.pathname) || /^\/luna\/users\/\d{1,32}$/.test(parsed.pathname) || collectionReadPaths.includes(parsed.pathname) || libraryWritePaths.includes(parsed.pathname) || parsed.pathname === '/luna/pc/comments' || (parsed.pathname === paths.playlists && (options.body != null || options.headers['x-helios'] != null))) {
       assert.equal(options.headers['x-helios'], 'fixture-helios')
       assert.equal(options.headers['x-medusa'], 'fixture-medusa')
       assert.equal(parsed.searchParams.get('device_platform'), platform)

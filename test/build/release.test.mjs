@@ -339,7 +339,7 @@ test('host overlay adds four virtual fixtures, replaces old Qishui tests and nev
   }
 })
 
-test('packaged audio checks reuse results across documentation changes but reject changed execution inputs', async () => {
+test('packaged native checks reuse results across documentation changes but reject changed execution inputs', async () => {
   const docs = classifyChanges([{ path: 'native/worker/README.md', status: 'M' }])
   assert.equal(docs.docsOnly, true)
   assert.equal(docs.nativeRace, false)
@@ -353,9 +353,9 @@ test('packaged audio checks reuse results across documentation changes but rejec
       await writeFile(file, content)
     }
     for (const name of [
-      'bin/worker', 'runtime/native/ffmpeg', 'test/fixtures/audio.m4a',
+      'bin/worker', 'runtime/native/bdms.node', 'test/fixtures/audio.m4a',
       'test/native-worker.test', 'helper/native.mjs',
-      ...['worker', 'gapless', 'ffmpeg', 'playback'].map(name => 'test/' + name + '.test.mjs'),
+      ...['worker', 'gapless', 'playback'].map(name => 'test/' + name + '.test.mjs'),
     ]) await write(name)
     const native = await packagedTestInputs(fixture.dir, 'native')
     const adapters = await packagedTestInputs(fixture.dir, 'adapters')
@@ -363,10 +363,10 @@ test('packaged audio checks reuse results across documentation changes but rejec
     await write('plugin.json', '{"version":"1.0.11"}')
     assert.equal(await packagedTestInputs(fixture.dir, 'native'), native)
     assert.equal(await packagedTestInputs(fixture.dir, 'adapters'), adapters)
-    await write('test/ffmpeg.test.mjs', 'new assertion')
+    await write('test/worker.test.mjs', 'new assertion')
     assert.equal(await packagedTestInputs(fixture.dir, 'native'), native)
     assert.notEqual(await packagedTestInputs(fixture.dir, 'adapters'), adapters)
-    await write('runtime/native/ffmpeg', 'changed executable')
+    await write('runtime/native/bdms.node', 'changed executable')
     assert.notEqual(await packagedTestInputs(fixture.dir, 'native'), native)
   } finally {
     await fixture.cleanup()

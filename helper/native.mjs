@@ -1,14 +1,12 @@
 // Official SDK runs offline, without access to account files or persistent writes.
 import { spawn } from 'node:child_process'
 import { realpathSync } from 'node:fs'
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { pluginRoot } from './runtime.mjs'
 import { error } from './protocol.mjs'
 import { createWindowsNative } from './windows-native.mjs'
-import { aacConversionArgs } from './ffmpeg-args.mjs'
-import { m4aGapless } from './m4a-gapless.mjs'
 
 const windows = createWindowsNative()
 
@@ -131,22 +129,5 @@ export async function decodeResource(data, auth, { signal } = {}) {
     return run('/usr/bin/sandbox-exec', ['-p', sandboxPolicy(root, [node]), node, '-e', script, '--', '--decode'], {
       input: JSON.stringify({ audio: data.toString('base64'), auth }), limit: MAX_AUDIO, root, signal,
     })
-  })
-}
-
-export async function convertAAC(data, { signal } = {}) {
-  if (process.platform === 'win32') return windows.convertAAC(data, { signal })
-  if (!Buffer.isBuffer(data) || data.length > MAX_AUDIO) throw error('unavailable')
-  return isolated(async root => {
-    const converter = await regular(path.join(pluginRoot, 'runtime/native/ffmpeg'))
-    const input = path.join(root, 'input.m4a'), output = path.join(root, 'output.flac')
-    await writeFile(input, data, { mode: 0o600 })
-    // The converter can read its own private input but never the account home.
-    await run('/usr/bin/sandbox-exec', ['-p', sandboxPolicy(root, [converter, input]), converter, ...aacConversionArgs(input, output, m4aGapless(data))], {
-      input: Buffer.alloc(0), limit: 4096, root, signal,
-    })
-    const info = await stat(output)
-    if (info.size <= 0 || info.size > MAX_AUDIO) throw error('unavailable')
-    return readFile(output)
   })
 }

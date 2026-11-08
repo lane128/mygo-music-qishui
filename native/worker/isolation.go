@@ -239,9 +239,6 @@ func isolatedNative(ctx context.Context, plugin, operation string, input []byte,
 		program := "qishui-helper-" + runtime.GOOS + "-" + runtime.GOARCH + ext
 		executable, e = regular(filepath.Join(plugin, "bin", program))
 		args = []string{"--decode"}
-	case "convert":
-		program := "ffmpeg" + ext
-		executable, e = regular(filepath.Join(native, program))
 	default:
 		return nil, errSetup
 	}
@@ -268,26 +265,6 @@ func isolatedNative(ctx context.Context, plugin, operation string, input []byte,
 			}
 		}
 	}
-	var outputPath string
-	if operation == "convert" {
-		inputPath := filepath.Join(scratch, "input.m4a")
-		outputPath = filepath.Join(scratch, "output.flac")
-		if len(input) == 0 || len(input) > maxAudio {
-			return nil, errUnavailable
-		}
-		if e = os.WriteFile(inputPath, input, 0600); e != nil {
-			return nil, errUnavailable
-		}
-		readable = append(readable, inputPath)
-		args = aacConversionArgs(inputPath, outputPath)
-		if !windows {
-			if trim := m4aGapless(input); trim != nil {
-				args = gaplessArgs(args, trim)
-			}
-		}
-		input = nil
-		limit = 4096
-	}
 	command := "/usr/bin/sandbox-exec"
 	if windows {
 		command, e = regular(filepath.Join(native, "windows-runner.exe"))
@@ -310,36 +287,8 @@ func isolatedNative(ctx context.Context, plugin, operation string, input []byte,
 	if e != nil {
 		return nil, e
 	}
-	if operation == "convert" {
-		// Treat converter output as untrusted too: it cannot point the parent at
-		// an account file through a symlink created inside private scratch.
-		root, e := os.OpenRoot(scratch)
-		if e != nil {
-			return nil, errUnavailable
-		}
-		defer root.Close()
-		file, e := root.Open(filepath.Base(outputPath))
-		if e != nil {
-			return nil, errUnavailable
-		}
-		defer file.Close()
-		info, e := file.Stat()
-		if e != nil || !info.Mode().IsRegular() || info.Size() <= 42 || info.Size() > maxAudio {
-			return nil, errUnavailable
-		}
-		result, e = io.ReadAll(io.LimitReader(file, maxAudio+1))
-		if e != nil || len(result) > maxAudio || !nativeFLAC(result) {
-			return nil, errUnavailable
-		}
-	}
 	if ctx.Err() != nil {
 		return nil, errUnavailable
 	}
 	return result, nil
-}
-func aacConversionArgs(input, output string) []string {
-	return []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-err_detect", "explode", "-y", "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-vn", "-sn", "-dn", "-map_metadata", "-1", "-c:a", "flac", "-sample_fmt", "s32", "-bits_per_raw_sample", "24", "-compression_level", "5", "-threads", "1", "-fs", strconv.Itoa(maxAudio), "-f", "flac", output}
-}
-func convertAAC(ctx context.Context, root string, data []byte) ([]byte, error) {
-	return isolatedNative(ctx, root, "convert", data, 4096)
 }

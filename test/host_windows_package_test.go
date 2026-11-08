@@ -45,7 +45,6 @@ func TestQishuiWindowsPackageInstall(t *testing.T) {
 					"runtime/native/qishui-sign.exe":    pe.IMAGE_FILE_MACHINE_AMD64,
 					"runtime/native/bdms.node":          pe.IMAGE_FILE_MACHINE_AMD64,
 					"runtime/native/metasecml.dll":      pe.IMAGE_FILE_MACHINE_AMD64,
-					"runtime/native/ffmpeg.exe":         pe.IMAGE_FILE_MACHINE_AMD64,
 				}
 				if kind.name == "validation" {
 					images["test/windows-runner.test.exe"] = target.machine
@@ -87,9 +86,21 @@ func TestQishuiWindowsPackageInstall(t *testing.T) {
 				if target.arch == "arm64" && build.SignerArch != "amd64" {
 					t.Fatal("ARM64 package requires a separate x64 signer")
 				}
-				for _, name := range []string{"native/signer/include/NODE-LICENSE", "native/signer/signer.cpp", "native/worker/go.mod", "runtime/native/NATIVE-BUILD.json", "runtime/native/FFMPEG-LICENSE", "runtime/native/FFMPEG-README.txt", "runtime/native/FFMPEG-BUILD.json", "runtime/native/FFMPEG-SOURCE.tar.xz", "runtime/native/WINDOWS-CRT-SOURCE.tar.xz", "runtime/native/MINGW-LICENSE", "runtime/native/ZIG-LICENSE", "scripts/build-ffmpeg.mjs", "scripts/ffmpeg-config.mjs", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE", "LICENSE", "NOTICE.md", "src/plugin.mjs", "native/windows-runner/main_windows.go", "native/windows-runner/go.sum"} {
+				for _, name := range []string{"native/signer/include/NODE-LICENSE", "native/signer/signer.cpp", "native/worker/go.mod", "runtime/native/NATIVE-BUILD.json", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE", "LICENSE", "NOTICE.md", "src/plugin.mjs", "helper/m4a.mjs", "native/windows-runner/main_windows.go", "native/windows-runner/go.sum"} {
 					if info, err := os.Stat(filepath.Join(installed, name)); err != nil || info.Size() == 0 {
 						t.Fatal("missing dependency license or corresponding source", name)
+					}
+				}
+				for _, name := range []string{"runtime/native/ffmpeg.exe", "runtime/native/FFMPEG-LICENSE", "runtime/native/FFMPEG-README.txt", "runtime/native/FFMPEG-BUILD.json", "runtime/native/FFMPEG-SOURCE.tar.xz", "runtime/native/MINGW-LICENSE", "runtime/native/ZIG-LICENSE", "runtime/native/WINDOWS-CRT-SOURCE.tar.xz"} {
+					if _, err := os.Stat(filepath.Join(installed, name)); !os.IsNotExist(err) {
+						t.Fatal("ZIP must not contain bundled FFmpeg assets", name)
+					}
+				}
+				if kind.name == "validation" {
+					for _, name := range []string{"scripts/build-ffmpeg.mjs", "scripts/ffmpeg-config.mjs"} {
+						if info, err := os.Stat(filepath.Join(installed, name)); err != nil || info.Size() == 0 {
+							t.Fatal("validation ZIP lost offline FFmpeg reference tooling", name)
+						}
 					}
 				}
 				p, err := Load(installed, t.TempDir())

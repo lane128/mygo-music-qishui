@@ -1,28 +1,12 @@
 // Build-only, fixed upstream distributions. No runtime downloads or user paths.
+// FFmpeg is not shipped: keep only the original signer SDK in runtime assets.
+// The offline FFmpeg build recipe and audio guards remain reference tooling;
+// they are never required by package.mjs or prepare-windows.mjs.
 import { createHash } from 'node:crypto'
-import { FFMPEG_SOURCE, ZIG_TOOLCHAIN } from './ffmpeg-config.mjs'
 
-export const WINDOWS_FFMPEG_FILES = {
-  'ffmpeg.exe': 'a33a01524efd6b5e65e2c8269a37b6ebb3262e78ac21bada34e88c6c346942ef',
-  'FFMPEG-LICENSE': '8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903',
-  'FFMPEG-README.txt': '0511b5fec7b252dd93be894072c4ef0e32eff73c27e61a92d2f77c221180296e',
-  'FFMPEG-BUILD.json': '5795d489dfaebb682785e789eb50ad5f8fb4b3792d67198b5e600db6bb01165c',
-  'FFMPEG-SOURCE.tar.xz': '1bab41925ca9a4cf5c8fe4da285b5966e81eeb041b951522c7ae82ce5993df6a',
-  'MINGW-LICENSE': '99a69660981156c21336fdb5661f89341b013c94e4bf9e1c7467b4745718397f',
-  'ZIG-LICENSE': '5c537d6853e005298a285d508cff9ac7192cea23576c840d485b2b586a7ff177',
-  'WINDOWS-CRT-SOURCE.tar.xz': '5d3b9e357ab33ef38cf82e022550c6e94060e27c02d5315bd0e22579c57cf55d',
-}
 export const WINDOWS_FILES = {
   'bdms.node': '73017455010b58aabae15b5560f82463f425acf1f4a813d91370abd1f35fac0f',
   'metasecml.dll': '53f322a7731cf64e6187d2fde1bb07558c2ab0a64fa6db0ef7c95d618ea9a226',
-  ...WINDOWS_FFMPEG_FILES,
-}
-export const DARWIN_FFMPEG_FILES = {
-  'ffmpeg': 'e0a1aee9fccf020032908ad3b22ba6b0cbc87976274d044b762a030b6f9752b0',
-  'FFMPEG-LICENSE': '8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903',
-  'FFMPEG-README.txt': 'a3369310d14a860251f047d80fe3198edb93572a9cd9085932f0c14b9e3ea4be',
-  'FFMPEG-BUILD.json': 'a1cd4e9e768cd2691af1c1279886391a7acb06a025d950127b1a1c16248df4d8',
-  'FFMPEG-SOURCE.tar.xz': '1bab41925ca9a4cf5c8fe4da285b5966e81eeb041b951522c7ae82ce5993df6a',
 }
 // Intel SDK from the official x64 update archive; never substitute arm64 assets.
 export const DARWIN_AMD64_FILES = {
@@ -33,17 +17,10 @@ export const DARWIN_AMD64_DOWNLOAD = {
   url: 'https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3.7.0-official-darwin_x64.tgz',
   sha256: '6da004452e20ba719fac5f393d70f09073d3fa908f536ca0c9877d823bac328b',
 }
-export const DARWIN_AMD64_FFMPEG_FILES = {
-  'ffmpeg': '1c3192ed23010541522ac7c4d9d18cb360b8ffb4e02d7046d009e0a35f75ebb4',
-  'FFMPEG-LICENSE': '8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903',
-  'FFMPEG-README.txt': 'a3369310d14a860251f047d80fe3198edb93572a9cd9085932f0c14b9e3ea4be',
-  'FFMPEG-BUILD.json': '0a9c77241c24aeef5a1995d0d65e80ae7f74374bd96cc2a0a62852c1a16255b5',
-  'FFMPEG-SOURCE.tar.xz': '1bab41925ca9a4cf5c8fe4da285b5966e81eeb041b951522c7ae82ce5993df6a',
-}
 
 export function darwinAssets(arch) {
-  if (arch === 'arm64') return { files: DARWIN_FILES, ffmpeg: DARWIN_FFMPEG_FILES }
-  if (arch === 'amd64') return { files: DARWIN_AMD64_FILES, ffmpeg: DARWIN_AMD64_FFMPEG_FILES }
+  if (arch === 'arm64') return { files: DARWIN_FILES }
+  if (arch === 'amd64') return { files: DARWIN_AMD64_FILES }
   throw new Error('Unsupported macOS architecture: ' + arch)
 }
 export const DARWIN_FILES = {
@@ -56,10 +33,6 @@ export const WINDOWS_DOWNLOADS = [
     sha256: '30fe7762ccdb3c978cd51f8ca4696aed5e8cad876d7bfc20b25168d4cd2d40ac',
     type: 'tgz', files: { 'app.asar.unpacked/bdms.node': 'bdms.node', 'app.asar.unpacked/metasecml.dll': 'metasecml.dll' },
   },
-]
-export const WINDOWS_SOURCES = [
-  ...WINDOWS_DOWNLOADS,
-  { build: 'scripts/build-ffmpeg.mjs', source: FFMPEG_SOURCE, toolchain: ZIG_TOOLCHAIN, files: WINDOWS_FFMPEG_FILES },
 ]
 export const sha256 = data => createHash('sha256').update(data).digest('hex')
 export function checkDigest(data, expected, name) {

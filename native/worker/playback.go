@@ -18,7 +18,7 @@ import (
 )
 
 var domains = []string{"qishui.com", "douyinvod.com", "byteimg.com", "bytegecko.com", "zjcdn.com", "pstatp.com", "snssdk.com"}
-var delegatedHost = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.qrstuvwxyzab\.com$`)
+var delegatedHost = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.(?:qrstuvwxyzab\.com|ctydoh\.cn)$`)
 
 func safeURL(raw string) *url.URL {
 	if len(raw) == 0 || len(raw) > 65536 {
@@ -209,8 +209,9 @@ func optionalNumber(raw json.RawMessage) (float64, bool) {
 	return rawNumber(raw)
 }
 func grantedCandidates(raw json.RawMessage, id, quality string) (candidate, *candidate, error) {
+	targetRank, supported := map[string]int{"standard": 1, "high": 2, "lossless": 3}[quality]
 	payload := object(raw)
-	if payload == nil {
+	if !supported || payload == nil {
 		return candidate{}, nil, errUnavailable
 	}
 	codes := []json.RawMessage{payload["error_code"], payload["status_code"], object(payload["status_info"])["code"]}
@@ -281,7 +282,12 @@ func grantedCandidates(raw json.RawMessage, id, quality string) (candidate, *can
 		if !ok || bitrate < 0 {
 			continue
 		}
-		candidates = append(candidates, candidate{URL: source, Codec: codec, Quality: rawString(meta["quality"]), Auth: auth, Bitrate: bitrate})
+		c := candidate{URL: source, Codec: codec, Quality: rawString(meta["quality"]), Auth: auth, Bitrate: bitrate}
+		level := aliases[strings.ToLower(c.Quality)]
+		if codec == "flac" && level != "lossless" || codec != "flac" && level != "higher" && level != "exhigh" || qualityRank(candidateQuality(c)) > targetRank {
+			continue
+		}
+		candidates = append(candidates, c)
 	}
 	if len(candidates) == 0 {
 		return candidate{}, nil, errUnavailable
@@ -291,13 +297,10 @@ func grantedCandidates(raw json.RawMessage, id, quality string) (candidate, *can
 		ra, rb := qualityRank(candidateQuality(a)), qualityRank(candidateQuality(b))
 		return ra < rb || ra == rb && a.Bitrate < b.Bitrate
 	})
-	selected := candidates[0]
+	selected := candidates[len(candidates)-1]
 	var fallback *candidate
 	for i, c := range candidates {
-		if qualityRank(candidateQuality(c)) <= qualityRank(quality) {
-			selected = c
-		}
-		if c.Codec == "aac" && (fallback == nil || qualityRank(candidateQuality(c)) <= qualityRank(quality)) {
+		if c.Codec == "aac" {
 			fallback = &candidates[i]
 		}
 	}
@@ -369,26 +372,17 @@ func materialize(ctx context.Context, c candidate, w *worker) (audioStream, bool
 	if len(data) == 0 || len(data) > maxAudio {
 		return fail(errUnavailable)
 	}
-	if c.Codec == "aac" {
-		if len(data) < 8 || string(data[4:8]) != "ftyp" {
-			return fail(errUnavailable)
-		}
-		data, e = w.convert(ctx, data)
-		if e != nil {
-			return fail(e)
-		}
+	typ := c.Codec
+	if typ == "aac" {
+		typ = "m4a"
 	}
-	typ := "flac"
-	if c.Codec == "mp3" {
-		typ = "mp3"
-	}
-	if len(data) > maxAudio || typ == "flac" && !nativeFLAC(data) || typ == "mp3" && !nativeMP3(data) {
+	if len(data) > maxAudio || typ == "m4a" && !nativeM4A(data) || typ == "flac" && !nativeFLAC(data) || typ == "mp3" && !nativeMP3(data) {
 		return fail(errUnavailable)
 	}
 	quality := "high"
 	if c.Codec == "flac" {
 		quality = "lossless"
-	} else if candidateQuality(c) == "standard" {
+	} else if candidateQuality(c) == "higher" {
 		quality = "standard"
 	}
 	return audioStream{Data: data, Type: typ, Quality: quality, BitRate: c.Bitrate}, false, nil

@@ -7,11 +7,11 @@ import { audioServer } from '../helper/audio-server.mjs'
 test('serves full audio, HEAD and byte ranges without exposing another resource', async () => {
   const server = await audioServer()
   try {
-    const stream = server.add({ data: Buffer.from('fLaCfixture-audio'), type: 'flac', quality: 'high' })
+    const stream = server.add({ data: Buffer.from('fLaCfixture-audio'), type: 'm4a', quality: 'standard' })
     assert.equal(stream.data, undefined)
     assert.equal(stream.size, 17)
     const full = await fetch(stream.url)
-    assert.equal(full.headers.get('content-type'), 'audio/flac')
+    assert.equal(full.headers.get('content-type'), 'audio/mp4')
     assert.equal(await full.text(), 'fLaCfixture-audio')
     const head = await fetch(stream.url, { method: 'HEAD' })
     assert.equal(head.headers.get('content-length'), '17')

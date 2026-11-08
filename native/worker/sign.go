@@ -12,6 +12,7 @@ import (
 )
 
 var headerToken = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+var userInfoPath = regexp.MustCompile(`^/luna/users/[0-9]{1,32}$`)
 var signPaths = map[string]bool{
 	"/luna/pc/me/recently-played-media": true, "/luna/pc/feed/mode": true, "/luna/pc/feed/song-tab": true,
 	"/luna/pc/discover": true, "/luna/pc/discover/mix": true, "/luna/pc/feed/radio/tracks": true, "/luna/pc/track_v2": true,
@@ -20,6 +21,11 @@ var signPaths = map[string]bool{
 	"/luna/pc/me/playlist/media/append": true, "/luna/pc/me/playlist/media/delete": true,
 	"/luna/pc/me/collection/media": true, "/luna/pc/me/collection/media/delete": true,
 	"/luna/pc/me/collection/playlist": true, "/luna/pc/me/collection/playlist/delete": true,
+	"/luna/pc/me/collection/artist": true, "/luna/pc/me/collection/artist/delete": true,
+	"/luna/pc/me/collection/album": true, "/luna/pc/me/collection/album/delete": true,
+	"/luna/pc/me/collection/mixed": true, "/luna/me/collection/artist": true,
+	"/luna/me/playlist/media/sort": true,
+	"/luna/pc/me/follow":           true, "/luna/pc/me/unfollow": true, "/luna/user/info": true,
 }
 
 type signSpec struct {
@@ -40,7 +46,7 @@ func parseSign(raw []byte, did string) (signSpec, error) {
 		return signSpec{}, errResponse
 	}
 	u, e := url.Parse(p.URL)
-	if e != nil || u.Scheme != "https" || u.Host != "api.qishui.com" || u.User != nil || u.Fragment != "" || !signPaths[u.Path] || u.RawPath != "" || strings.Contains(p.URL, "#") {
+	if e != nil || u.Scheme != "https" || u.Host != "api.qishui.com" || u.User != nil || u.Fragment != "" || (!signPaths[u.Path] && !userInfoPath.MatchString(u.Path)) || u.RawPath != "" || strings.Contains(p.URL, "#") {
 		return signSpec{}, errResponse
 	}
 	query, e := url.ParseQuery(u.RawQuery)

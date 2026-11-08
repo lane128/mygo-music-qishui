@@ -84,7 +84,7 @@ func (b *audioBridge) add(s audioStream) (*streamResult, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.prune()
-	if b.closed || len(s.Data) == 0 || len(s.Data) > b.limit || (s.Type != "flac" && s.Type != "mp3" && s.Type != "ogg") {
+	if b.closed || len(s.Data) == 0 || len(s.Data) > b.limit || (s.Type != "flac" && s.Type != "mp3" && s.Type != "ogg" && s.Type != "m4a") {
 		return nil, errUnavailable
 	}
 	for b.bytes+len(s.Data) > b.limit || len(b.entries) >= 5 {
@@ -205,7 +205,7 @@ func (b *audioBridge) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		status = 206
 		w.Header().Set("Content-Range", "bytes "+strconv.Itoa(start)+"-"+strconv.Itoa(end)+"/"+strconv.Itoa(len(s.Data)))
 	}
-	contentType := map[string]string{"flac": "audio/flac", "mp3": "audio/mpeg", "ogg": "audio/ogg"}[s.Type]
+	contentType := map[string]string{"flac": "audio/flac", "mp3": "audio/mpeg", "ogg": "audio/ogg", "m4a": "audio/mp4"}[s.Type]
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.Header().Set("Cache-Control", "no-store")

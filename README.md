@@ -2,7 +2,7 @@
 
 为 [MyGO Music](https://github.com/egoist/mygo-music) 接入汽水音乐，使用汽水音乐 App 扫码登录，支持搜索、歌单、推荐、电台、播放历史、歌手与专辑，以及评论和音乐库操作。
 
-**当前源码版本：1.0.10。** 正式发布状态与安装包以 [Releases](https://github.com/lane128/mygo-music-qishui/releases) 为准。1.0.9 的歌手、专辑、评论和音乐库基础功能已由用户确认 macOS、Windows 两平台自测通过。
+**当前源码版本：1.0.11。** 正式发布状态与安装包以 [Releases](https://github.com/lane128/mygo-music-qishui/releases) 为准。1.0.9 的歌手、专辑、评论和音乐库基础功能已由用户确认 macOS、Windows 两平台自测通过。
 
 安装包使用 MyGO 插件沙箱和包内原生辅助程序，**不包含 Node，也无需 Chrome、Edge 或自行安装 FFmpeg**。
 
@@ -14,7 +14,7 @@
 
 [MyGO 下载页](https://music.egoist.dev/zh/download) 提供下列六种系统与架构组合；插件当前发布包的覆盖情况如下。macOS 主程序要求 macOS 13 或更新版本。
 
-| 系统与架构 | 1.0.10 Release 安装包 | 验证情况 |
+| 系统与架构 | 1.0.11 Release 安装包 | 验证情况 |
 | --- | --- | --- |
 | macOS Apple Silicon（arm64） | `plugin-darwin-arm64.zip` | 原生、音频夹具与宿主自动化通过；本轮完整试听待验收 |
 | macOS Intel（amd64） | `plugin-darwin-amd64.zip` | 实验性支持；构建、静态与宿主安装检查通过，实机执行待用户反馈 |
@@ -33,9 +33,18 @@ https://github.com/lane128/mygo-music-qishui
 
 已通过仓库安装的用户，可在插件菜单中「检查更新」。ZIP 导入显示「来自本机」，无法通过仓库检查更新；如需切换为仓库安装，可先移除插件再输入仓库地址，MyGO 会保留插件数据。1.0.9 保持原插件 ID 和登录态格式，会话过期时重新扫码即可。由本地自测包升级时，更新后完全退出并重新打开 MyGO，避免继续使用旧的歌手资料与图片缓存。
 
-本轮聚焦 macOS 与 Windows，Linux 暂不提供运行包，不能用其他系统或架构的 ZIP 代替。官方公开 PC 组件目前没有找到 Linux 签名库，不能只交叉编译 Go helper 就提供完整 Linux 功能。Windows ARM64 构建将 ARM64 worker / 隔离启动器与 x64 签名和音频子进程组合，要求 Windows 11 x64 转译；实机转译与隔离待验收，ARM64 进程不直接加载 x64 DLL。MyGO 下载页未列出 32 位宿主，本插件也不提供 x32/386 包。
+本轮聚焦 macOS 与 Windows，Linux 暂不提供运行包，不能用其他系统或架构的 ZIP 代替。官方公开 PC 组件目前没有找到 Linux 签名库，不能只交叉编译 Go helper 就提供完整 Linux 功能。Windows ARM64 源码构建将 ARM64 worker / 隔离启动器与 x64 签名子进程组合，要求 Windows 11 x64 转译；实机转译与隔离待验收，ARM64 进程不直接加载 x64 DLL。MyGO 下载页未列出 32 位宿主，本插件也不提供 x32/386 包。
 
 也可以在 [MyGO 插件目录](https://music.egoist.dev/zh/plugins) 查找此插件，目录更新可能有索引延迟。
+
+## 1.0.11 改动
+
+- **M4A 直出**：AAC-LC 解密后直接播放，原生 FLAC 保持直出，四平台运行包移除 FFmpeg。修复部分歌曲的时长校验、附带文字轨和官方 CDN 跳转兼容问题；标准 / 高音质 / 无损三档均排除 `medium` 音源。
+- **歌词与分享**：新增官方逐字歌词、中文翻译和歌曲菜单复制分享链接。
+- **音乐库**：新增歌手关注 / 取消、专辑收藏 / 取消及侧栏收藏列表、自有歌单歌曲上移 / 下移，以及账号「我的主页」。
+- **页面修复**：修复空收藏时的收藏专辑与专辑详情加载失败，以及 @LV、C.U 等绑定用户歌手的页面加载失败。
+
+仍需 MyGO 0.1.20+。Intel Mac、Windows 实机及新增账号写入的人工验收尚未完成，先发布收集反馈；自动化与实际验证范围见 [验证记录](VALIDATION.md)。
 
 ## 1.0.10 改动
 
@@ -53,6 +62,14 @@ https://github.com/lane128/mygo-music-qishui
 - **头像兼容**：评论、歌手搜索与歌手主页使用专用头像解析；完整图片地址保留原路径与查询参数，模板头像使用接口返回的 CDN。官方未提供可用头像时沿用 MyGO 默认占位，不生成本地图片。
 - **权限与账号隔离**：修改歌单前核对当前账号所有者和官方类型，保护「我喜欢」、历史等固定列表。退出或换号清理目录、搜索、评论缓存，取消旧请求并拒绝迟到结果。新增写入均按官方协议签名，不自动重试。
 
+## 歌词与音乐库
+
+1.0.11 接入逐字歌词、官方中文翻译、歌曲菜单复制分享链接、目录及绑定用户的歌手关注 / 取消、专辑收藏 / 取消与侧栏收藏列表、自有歌单歌曲上移 / 下移，以及账号菜单的「我的主页」。真实账号写入和 Windows 实机验收待完成；进展与阻塞见 [功能待办](TODO.md)。
+
+逐字时间来自官方歌词；多个 Unicode 字符共用一组时间时按官方规则均分。缺少可靠逐字时间时保留行歌词，没有官方翻译时不生成翻译。「我的主页」使用已有账号资料及我的 / 收藏歌单。
+
+复制链接使用已验证的官方公开单曲页 `https://music.douyin.com/qishui/share/track?track_id=…`，不包含分享者标识、登录信息或授权音频地址，也不为列表内每首歌额外发起请求。歌手关注按官方详情中的类型区分：目录歌手使用收藏协议，绑定用户的歌手使用其真实用户 ID 的关注协议；不会把歌手 ID 当作用户 ID。
+
 ## 功能
 
 - 扫码登录、账号资料、登录态恢复和退出；已确认的会员等级显示为 `VIP · 昵称` 或 `SVIP · 昵称`。
@@ -63,25 +80,37 @@ https://github.com/lane128/mygo-music-qishui
 - 「推荐」提供播放推荐、熟悉、新鲜三个选项，支持持续续歌和切换下一首。
 - 「听歌模式」使用官方图片、名称与介绍；电台持续取歌，歌单打开真实歌曲列表。常用模式默认显示 8 个，「查看全部」浏览更多场景；探索区底部「换一批」打开下一批页面，支持前进、后退。
 - 侧栏「历史播放」展示账号最近播放记录，最多 1000 首；成功开始播放后通过官方接口追加历史。历史详情使用第一首歌曲的封面，侧栏保持默认图标。
-- 播放当前账号获准的音频，支持音质选择与进度拖动。AAC 会转换为 MyGO 支持的格式，保留来源音质等级。
+- 播放当前账号获准的音频，支持音质选择与进度拖动。1.0.11将符合格式检查的 AAC-LC 以 M4A 直接交给 MyGO，FLAC 保持原生直出，保留实际来源音质等级；运行时不再调用 FFmpeg。
 
 ## 登录与权限
 
 点击「登录」，用汽水音乐 App 扫码并在手机上确认。登录态保存在 MyGO 插件存储中，兼容此前版本。
 
-扫码、搜索、搜索建议、个人歌单列表、普通歌单内容、歌手与专辑公开目录和公开歌词不启动辅助程序。评论、喜欢状态、音乐库写入，以及部分首页、推荐、电台、历史和播放请求需要包内原生签名器；授权音频处理和本机播放服务也由辅助程序执行，因此 MyGO 会显示启动辅助程序的权限申请。公开目录与歌词请求不携带账号 Cookie。
+扫码、搜索、搜索建议、个人歌单列表、普通歌单内容、账号主页和公开歌词不启动辅助程序。登录后的歌手页、专辑页会额外读取当前账号的关注 / 收藏状态，需要包内原生签名器；读取失败时明确报错，不把未知状态当作未关注 / 未收藏。收藏专辑列表、评论、喜欢状态、音乐库写入，以及部分首页、推荐、电台、历史和播放请求也需要签名器；授权音频处理和本机播放服务由辅助程序执行，因此 MyGO 会显示启动辅助程序的权限申请。歌手 / 专辑公开资料和歌词请求仍不携带账号 Cookie 或签名。
 
 退出、换号或取消会停止相关任务。遇到汽水限流或额外验证时会停止并提示，不自动绕过，也不切回浏览器登录。
 
 ## 使用说明与限制
 
-评论正文会去掉两端空白并合并连续换行，不能为空。官方最多允许 280 个字素；宿主缺少 `Intl.Segmenter` 时按 Unicode 码点保守计数，组合字符、旗帜和部分 emoji 会更早达到限制。**发帖超时后请先查看评论，再决定是否重发**，以免重复发送。评论回复树、删除评论、歌单排序、歌手关注、专辑收藏及播客暂未接入。
+评论正文会去掉两端空白并合并连续换行，不能为空。官方最多允许 280 个字素；宿主缺少 `Intl.Segmenter` 时按 Unicode 码点保守计数，组合字符、旗帜和部分 emoji 会更早达到限制。**发帖超时后请先查看评论，再决定是否重发**，以免重复发送。评论回复树、删除评论及播客暂未接入。绑定用户的歌手关注状态从经过签名的官方用户资料接口读取；缺少有效绑定、未知类型或畸形状态时明确报错，不猜测关注对象或状态。
 
-普通歌单只能在确认归当前账号所有且类型允许时编辑。「我喜欢」加删歌曲使用歌曲收藏协议；历史与其他固定列表不能改名或删除。完整喜欢列表读取失败时，不会把未读到的歌曲直接判为未喜欢。
+普通歌单只能在确认归当前账号所有且类型允许时编辑。「我喜欢」加删歌曲使用歌曲收藏协议；历史与其他固定列表不能改名或删除。完整喜欢列表读取失败时，不会把未读到的歌曲直接判为未喜欢。1.0.11 支持按 MyGO 菜单上移 / 下移自有普通歌单歌曲：提交前重新核对完整顺序；含未知媒体、重复歌曲或顺序已变化时拒绝排序，需刷新后再操作。写入超时不自动重试。官方排序契约没有已知版本号条件，仍无法排除其他客户端在最后一次核对之后同时修改的竞争。
 
 播放历史只记录歌曲开始播放，不提交收听时长、完成率或听歌次数统计。暂停后继续由宿主去重，重新播放可以再次记录；上报失败不会中断音频，不自动重试。**历史详情不是实时刷新**：通常需距上次加载超过 30 秒后重新进入页面。接口模拟和离线签名成功不代表官方服务端已经入库，协议与验证边界见 [播放历史说明](PLAYBACK-HISTORY.md)。
 
 本插件遵循当前账号的试听、会员和地区授权；仅获准试听的歌曲会提示播放不可用。
+
+1.0.11按下面的三档规则选择音源，所有路径都排除汽水 `medium`。只剩 `medium`、没有不高于所选档位的可用资源，或解密后格式不符合校验时，返回播放不可用。
+
+| MyGO 音质 | 汽水音源与回退顺序 | 返回格式 |
+| --- | --- | --- |
+| 标准 `standard` | `higher` | AAC-LC M4A |
+| 高音质 `high` | `highest` → `higher` | AAC-LC M4A |
+| 无损 `lossless` | `lossless` → `highest` → `higher` | 原生 FLAC，回退时为 M4A |
+
+AAC 解密后检查完整 ASC、单音轨非分片 MP4、edit list 与样本时序、样本大小和 chunk offset；允许额外携带一个位于媒体数据开头或末尾、大小不超过 64 KiB 的未加密文字样本，音频和文字数据均保留原有字节与偏移；HE-AAC、SBR / PS、未知配置、未解除的加密描述和未验证的时序布局会被拒绝。AAC 以解密后的原字节返回，M4A 容器不代表无损；回退 `higher` 时向宿主返回 `standard`，避免缓存误记音质。宿主 AAC 解码经 16 位 PCM，与旧 FFmpeg 输出的 24 位 FLAC 存在输出精度差异，完整试听仍待验收。
+
+此前 MyGO 0.1.20 / 0.1.22 的六档抽样中，8 份 M4A、1 份 FLAC 的完整解码、时序、缓存和下载通过；严格 seek 为 7/9 通过，两份 `medium` 存在与 FFmpeg 自身跳转类似的噪声重建差异。本轮排除 `medium` 后仅接入上表范围，不据抽样宣称覆盖全部资源。接入与验证结果见 [功能待办](TODO.md) 和 [验证记录](VALIDATION.md)。音源增益 / 峰值、播客和远程设备控制仍待确认协议。
 
 歌曲、歌单、歌手和听歌模式使用官方 HTTPS 图片，插件不内置或重新着色封面。历史为空或首歌缺图时由宿主默认显示。部分官方模式图标为白色透明图，在 MyGO 浅色主题中对比度较低。卡片布局、比例、字体及列表缓存由 MyGO 统一管理；本项目只实现插件功能，不修改宿主。
 
@@ -108,45 +137,37 @@ npm run test:native
 
 每次打包生成运行 ZIP 和独立的 `-validation.zip`。运行包包含完整运行组件、许可证、对应源码和构建输入，不带图片、测试程序或验证工具。验证包包含相同运行代码，并增加测试与夹具，可独立解压验证。
 
-**正式 Release 仅上传运行 ZIP。** v1.0.10 保留原 macOS arm64 / Windows amd64 附件，并按用户决定补充 macOS amd64 / Windows arm64 实验性附件以收集反馈；新增平台的实机验证未完成。原标签不移动，新增平台构建源码见 `main` 和对应 ZIP 内的源码，具体提交记录在 Release 补充说明中。MyGO 按文件名中的平台与架构选择附件，不排除 `-validation.zip`，因此验证 ZIP 保留作开发验证，不能与运行 ZIP 混放在用于自动安装的 Release 中。公开源码保留验证工具和构建方式。
+**正式 Release 仅上传运行 ZIP。** v1.0.11 提供 macOS arm64 / amd64、Windows amd64 / arm64 四种安装包，均对应本版标签源码；Intel Mac 与 Windows 保留实验性状态，实机验证待用户反馈。MyGO 按文件名中的平台与架构选择附件，不排除 `-validation.zip`，因此验证 ZIP 保留作开发验证，不能与运行 ZIP 混放在用于自动安装的 Release 中。公开源码保留验证工具和构建方式。
 
 源码测试会明确跳过缺少官方原生组件的检查。完整原生回归先构建并解压对应验证包，将 `QISHUI_NATIVE_ROOT` 设为解压目录的绝对路径。macOS 可直接运行 `test/native-worker.test -test.v -test.timeout=5m`，无需 Node 或 Go 工具链。`bdms.node` 是官方原生动态组件的文件名，不表示安装包包含 Node 解释器。
 
 ### 构建安装包
 
-macOS arm64 需要 Xcode 命令行工具和 `xz`。先用固定源码构建随包附带的精简 FFmpeg（源码也可使用已有包中的 `FFMPEG-SOURCE.tar.xz` 离线重建）：
+macOS arm64 需要 Xcode 命令行工具。设置 `QISHUI_NATIVE_DIR` 指向已核验的官方 3.7.0 原生组件目录，再运行 `npm run package`。构建器校验官方组件哈希，并构建、签名和检查本项目辅助程序；当前源码不再要求 FFmpeg 构建资产。
+
+Intel macOS 可从 macOS arm64 交叉构建。使用官方 x64 归档的原生组件，设置 `QISHUI_DARWIN_AMD64_NATIVE_DIR` 后运行：
 
 ```sh
-npm run build:ffmpeg -- /absolute/new/macos-audio /absolute/FFMPEG-SOURCE.tar.xz --native
-```
-
-设置 `QISHUI_NATIVE_DIR` 指向已核验的官方 3.7.0 原生组件目录，`QISHUI_FFMPEG_DIR` 指向上述 macOS 音频构建目录，再运行 `npm run package`。构建器校验组件哈希和 FFmpeg 可执行文件签名。
-
-1.0.10 源码中的 **macOS FFmpeg 改动**：AAC 转为 24 位 FLAC，保留源采样率、声道与来源音质等级，避免旧 AudioToolbox 路径的满幅样本溢出。对于无编辑列表且具有完整、一致 `iTunSMPB` 信息的单音轨 M4A，按容器中的编码延迟和有效样本数裁剪首尾填充；其他文件采用 FFmpeg 的默认时序，不按歌曲标称时长猜测裁剪。各版本的试听与实机验收情况见 [验证记录](VALIDATION.md)；此描述不改变 v1.0.9 正式资产。
-
-Intel macOS 也从 macOS arm64 交叉构建。使用官方 x64 归档的原生组件，不能使用 arm64 文件代替；设置 `QISHUI_DARWIN_AMD64_NATIVE_DIR`，音频构建输出设为 `QISHUI_DARWIN_AMD64_FFMPEG_DIR`：
-
-```sh
-npm run build:ffmpeg -- /absolute/new/intel-audio /absolute/FFMPEG-SOURCE.tar.xz --target darwin-amd64
 npm run package -- --target darwin-amd64
 ```
 
 构建和静态安装检查不执行 Intel 程序；签名、隔离与音频的运行验收需要 Intel Mac 或已安装 Rosetta 的 Mac。此构建入口不会安装 Rosetta。
 
-Windows x64 交叉打包固定使用 macOS arm64、Xcode 命令行工具、`xz` 和 Zig 0.15.2。按 `scripts/ffmpeg-config.mjs` 下载固定源码和工具链归档，运行：
+Windows 交叉打包使用 macOS arm64、Xcode 命令行工具和 Zig 0.15.2。准备固定哈希校验的官方签名组件：
 
 ```sh
-npm run build:ffmpeg -- /absolute/new/audio /absolute/source.tar.gz /absolute/zig.tar.xz
-npm run prepare:windows -- /absolute/new/runtime-directory /absolute/new/audio
+npm run prepare:windows -- /absolute/new/runtime-directory
 ```
 
-设置 `QISHUI_WINDOWS_ASSETS` 指向准备好的运行组件目录，`QISHUI_ZIG` 指向 Zig 0.15.2 可执行文件，再运行 `npm run package -- --target windows-amd64`。所有外部输入先校验哈希。音频源码也可使用包内 `FFMPEG-SOURCE.tar.xz` 离线重建；精简 FFmpeg 只保留 AAC/FLAC、必要 PCM 与重采样，不含网络、视频和设备支持，完整对应源码及许可证随包提供。这些路径和工具只用于开发，插件使用者无需配置。
+设置 `QISHUI_WINDOWS_ASSETS` 指向准备好的组件目录，`QISHUI_ZIG` 指向 Zig 0.15.2 可执行文件，再运行 `npm run package -- --target windows-amd64`。这些路径和工具只用于开发，插件使用者无需配置。
 
-Windows ARM64 复用上述 x64 官方签名组件和 FFmpeg 资产，仍设置 `QISHUI_WINDOWS_ASSETS` 与 `QISHUI_ZIG`，再运行 `npm run package -- --target windows-arm64`。打包器只将 Go worker、AppContainer 启动器和验证程序编译为 ARM64，逐个校验组件架构；签名器、SDK 与 FFmpeg 为 x64 子进程，因此要求 **Windows 11 ARM64 的 x64 转译支持**。Windows 10 ARM64 不在此构建的运行范围内。完整包的签名、隔离与播放仍需实机验收。
+Windows ARM64 复用上述 x64 官方签名组件，设置同样的环境变量，再运行 `npm run package -- --target windows-arm64`。Go worker、AppContainer 启动器和验证程序编译为 ARM64；签名器与 SDK 仍为 x64 子进程，要求 **Windows 11 ARM64 的 x64 转译支持**。完整包的签名、隔离与播放仍需实机验收。
+
+离线 FFmpeg 构建和对照工具保留在源码及验证包中，使用固定源码和工具链；可通过 `QISHUI_TEST_FFMPEG` 指定外部参考程序运行相关测试。它们不进入运行包，也不是插件播放或打包依赖。
 
 ### Windows 验证
 
-在 Windows 上将自行构建的 `-validation.zip` 解压到新目录，运行 `scripts/verify-windows.cmd`。它使用包内独立 Go 测试程序和 FFmpeg，不需要 Node 或 Go，检查隔离、进程生命周期、签名和音频夹具；不读取账号存储，不替代手机扫码、真实账号授权播放和音频设备出声验收。
+在 Windows 上将自行构建的 `-validation.zip` 解压到新目录，运行 `scripts/verify-windows.cmd`。它使用包内独立 Go 测试程序，不需要 Node、Go 或 FFmpeg，检查隔离、进程生命周期、签名和 M4A 解密直出夹具；不读取账号存储，不替代手机扫码、真实账号授权播放和音频设备出声验收。
 
 开发者也可运行 `node scripts/verify-windows.mjs` 生成验证报告；其他系统可用 `node scripts/verify-windows.mjs --check /extracted/package` 静态检查 Windows 包，静态检查不等同于 Windows 执行。
 

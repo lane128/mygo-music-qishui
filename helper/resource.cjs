@@ -60,14 +60,58 @@ function enough(box, offset, bytes) {
   if (offset < box.body || offset + bytes > box.end) throw new DecodeError('truncated MP4 table');
 }
 
+// One sound track, with an optional plain QuickTime text sample at an mdat edge.
+function audioTrack(b, movie, mdat) {
+  const tracks = boxes(b, movie.body, movie.end).filter(x => x.type === 'trak');
+  if (!tracks.length || tracks.length > 2) throw new DecodeError('unsupported track count');
+  let sound, text;
+  for (const track of tracks) {
+    const mdia = one(boxes(b, track.body, track.end), 'mdia'), hdlr = one(boxes(b, mdia.body, mdia.end), 'hdlr'); enough(hdlr, hdlr.body, 12);
+    const type = b.toString('ascii', hdlr.body + 8, hdlr.body + 12);
+    if (type === 'soun' && !sound) sound = track;
+    else if (type === 'text' && !text) text = track;
+    else throw new DecodeError('unsupported track type');
+  }
+  if (!sound) throw new DecodeError('missing sound track');
+  let start = mdat.body, end = mdat.end;
+  if (!text) return { track: sound, start, end };
+  const mdia = one(boxes(b, text.body, text.end), 'mdia'), minf = one(boxes(b, mdia.body, mdia.end), 'minf'), stbl = one(boxes(b, minf.body, minf.end), 'stbl'), tables = boxes(b, stbl.body, stbl.end);
+  if (tables.some(x => ['senc', 'saio', 'saiz', 'ctts'].includes(x.type))) throw new DecodeError('unsupported text encryption or timing');
+  const stsd = one(tables, 'stsd'); enough(stsd, stsd.body, 8);
+  if (b.readUInt32BE(stsd.body) !== 0 || b.readUInt32BE(stsd.body + 4) !== 1) throw new DecodeError('unsupported text description');
+  const entries = boxes(b, stsd.body + 8, stsd.end), entry = one(entries, 'text'); enough(entry, entry.body, 8);
+  if (entries.length !== 1 || b.readUInt16BE(entry.body + 6) !== 1) throw new DecodeError('unsupported text reference');
+  const stsz = one(tables, 'stsz'); enough(stsz, stsz.body, 12);
+  if (b.readUInt32BE(stsz.body) !== 0 || b.readUInt32BE(stsz.body + 8) !== 1) throw new DecodeError('unsupported text samples');
+  let size = b.readUInt32BE(stsz.body + 4);
+  if (!size) { enough(stsz, stsz.body + 12, 4); size = b.readUInt32BE(stsz.body + 12); }
+  if (!size || size > 65536) throw new DecodeError('unsupported text size');
+  const stsc = one(tables, 'stsc'); enough(stsc, stsc.body, 20);
+  if (b.readUInt32BE(stsc.body) !== 0 || [4, 8, 12, 16].some(at => b.readUInt32BE(stsc.body + at) !== 1)) throw new DecodeError('unsupported text mapping');
+  const stts = one(tables, 'stts'); enough(stts, stts.body, 16);
+  if (b.readUInt32BE(stts.body) !== 0 || b.readUInt32BE(stts.body + 4) !== 1 || b.readUInt32BE(stts.body + 8) !== 1 || !b.readUInt32BE(stts.body + 12)) throw new DecodeError('unsupported text timing');
+  const offsets = tables.filter(x => ['stco', 'co64'].includes(x.type));
+  if (offsets.length !== 1) throw new DecodeError('unsupported text offsets');
+  const chunk = offsets[0], wide = chunk.type === 'co64'; enough(chunk, chunk.body, wide ? 16 : 12);
+  if (b.readUInt32BE(chunk.body) !== 0 || b.readUInt32BE(chunk.body + 4) !== 1) throw new DecodeError('unsupported text chunks');
+  const offset = wide ? Number(b.readBigUInt64BE(chunk.body + 8)) : b.readUInt32BE(chunk.body + 8);
+  if (!Number.isSafeInteger(offset) || offset < start || offset > end || size > end - offset) throw new DecodeError('invalid text range');
+  if (offset === start) start += size;
+  else { if (offset + size !== end) throw new DecodeError('interleaved text unsupported'); end -= size; }
+  if (start >= end) throw new DecodeError('empty sound range');
+  return { track: sound, start, end };
+}
+
 function decodeWithKey(input, key) {
   if (!Buffer.isBuffer(key) || key.length !== 16 || input.length > 128 * 1024 * 1024) throw new DecodeError('invalid input');
   const output = Buffer.from(input);
   const top = boxes(output, 0, output.length);
   if (top.some(box => box.type === 'moof')) throw new DecodeError('fragmented MP4 unsupported');
-  const mdat = one(top, 'mdat');
-  let parent = one(top, 'moov');
-  for (const type of ['trak', 'mdia', 'minf', 'stbl']) parent = one(boxes(output, parent.body, parent.end), type);
+  const mdat = one(top, 'mdat'), movie = one(top, 'moov');
+  if (boxes(output, movie.body, movie.end).some(box => box.type === 'mvex')) throw new DecodeError('fragmented MP4 unsupported');
+  const { track, start: audioStart, end: audioEnd } = audioTrack(output, movie, mdat);
+  let parent = track;
+  for (const type of ['mdia', 'minf', 'stbl']) parent = one(boxes(output, parent.body, parent.end), type);
   const tables = boxes(output, parent.body, parent.end);
   const stsz = one(tables, 'stsz'); enough(stsz, stsz.body, 12);
   const fixedSize = output.readUInt32BE(stsz.body + 4);
@@ -75,7 +119,7 @@ function decodeWithKey(input, key) {
   if (!count || count > 1000000) throw new DecodeError('invalid sample count');
   if (!fixedSize) enough(stsz, stsz.body + 12, count * 4);
   const sizes = Array.from({length: count}, (_, i) => fixedSize || output.readUInt32BE(stsz.body + 12 + i * 4));
-  if (sizes.some(size => !size) || sizes.reduce((sum, size) => sum + size, 0) !== mdat.end - mdat.body) throw new DecodeError('unsupported sample layout');
+  if (sizes.some(size => !size) || sizes.reduce((sum, size) => sum + size, 0) !== audioEnd - audioStart) throw new DecodeError('unsupported sample layout');
   // Verify that chunk offsets follow this one-track, contiguous sample order.
   // Chunk reordering and interleaved media are rejected instead of corrupted.
   const offsets = tables.filter(box => box.type === 'stco' || box.type === 'co64');
@@ -93,7 +137,7 @@ function decodeWithKey(input, key) {
     return {first: output.readUInt32BE(p), count: output.readUInt32BE(p + 4), entry: output.readUInt32BE(p + 8)};
   });
   if (runs[0].first !== 1 || runs.some((run, i) => !run.count || run.entry !== 1 || run.first > chunkCount || (i > 0 && run.first <= runs[i - 1].first))) throw new DecodeError('invalid chunk mapping');
-  let sample = 0, expected = mdat.body, run = 0;
+  let sample = 0, expected = audioStart, run = 0;
   for (let i = 0; i < chunkCount; i++) {
     while (run + 1 < runs.length && runs[run + 1].first <= i + 1) run++;
     const p = stco.body + 8 + i * stride;
@@ -101,7 +145,7 @@ function decodeWithKey(input, key) {
     if (offset !== BigInt(expected) || sample + runs[run].count > count) throw new DecodeError('noncontiguous chunks unsupported');
     for (let n = 0; n < runs[run].count; n++) expected += sizes[sample++];
   }
-  if (sample !== count) throw new DecodeError('incomplete chunk mapping');
+  if (sample !== count || expected !== audioEnd) throw new DecodeError('incomplete chunk mapping');
   const stsd = one(tables, 'stsd'); enough(stsd, stsd.body, 8);
   if (output.readUInt32BE(stsd.body + 4) !== 1) throw new DecodeError('multiple sample descriptions unsupported');
   const entry = one(boxes(output, stsd.body + 8, stsd.end), 'enca');
@@ -142,7 +186,7 @@ function decodeWithKey(input, key) {
   const senc = one(tables, 'senc'); enough(senc, senc.body, 8);
   const flags = output.readUIntBE(senc.body + 1, 3);
   if (output[senc.body] !== 0 || (flags & ~2) !== 0 || output.readUInt32BE(senc.body + 4) !== count) throw new DecodeError('unsupported CENC sample table');
-  let p = senc.body + 8, offset = mdat.body;
+  let p = senc.body + 8, offset = audioStart;
   for (const size of sizes) {
     enough(senc, p, ivSize);
     const iv = Buffer.alloc(16); output.copy(iv, 0, p, p + ivSize); p += ivSize;
@@ -166,11 +210,11 @@ function decodeWithKey(input, key) {
     } else cipher.update(output.subarray(offset, end)).copy(output, offset);
     cipher.final(); offset = end;
   }
-  if (p !== senc.end || offset !== mdat.end) throw new DecodeError('trailing CENC sample data');
+  if (p !== senc.end || offset !== audioEnd) throw new DecodeError('trailing CENC sample data');
   if (format === 'fLaC') {
     // The shared player reads native FLAC. Rewrap metadata and decrypted frames
     // without transcoding, changing samples, or extending the granted resource.
-    return Buffer.concat([Buffer.from('fLaC'), flacMetadata, output.subarray(mdat.body, mdat.end)]);
+    return Buffer.concat([Buffer.from('fLaC'), flacMetadata, output.subarray(audioStart, audioEnd)]);
   }
   // Preserve box lengths and chunk offsets while removing encryption markers.
   output.write('mp4a', entry.pos + 4, 4, 'ascii');

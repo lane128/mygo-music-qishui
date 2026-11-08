@@ -4,9 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,8 +16,7 @@ import (
 	"time"
 )
 
-// Optional offline native verification. The extracted validation package supplies
-// the helper, SDK, converter/runner and the six existing generated AAC fixtures.
+// Optional offline native verification: helper, isolated SDK and generated fixtures.
 // No account, signed media URL, network request or child diagnostic is printed.
 func nativeRoot(t *testing.T) string {
 	t.Helper()
@@ -49,8 +48,6 @@ func TestNativeSigner(t *testing.T) {
 		t.Fatal("isolated official signer failed")
 	}
 }
-
-// Every allowed catalogue route must traverse both native validators and the real isolated SDK.
 func TestNativeCatalogSigners(t *testing.T) {
 	root := nativeRoot(t)
 	var req request
@@ -73,6 +70,27 @@ func TestNativeCatalogSigners(t *testing.T) {
 	}
 }
 
+// Exercise the C++ route boundary directly so a permissive worker cannot bypass it.
+func TestNativeUserInfoSigningRoute(t *testing.T) {
+	root := nativeRoot(t)
+	var req request
+	_ = json.Unmarshal(signFrame(), &req)
+	base, err := parseSign(req.Params, req.Session.DeviceID)
+	if err != nil {
+		t.Fatal("sign fixture invalid")
+	}
+	for _, tc := range userInfoRouteCases {
+		spec := base
+		spec.URL = strings.Replace(base.URL, "/luna/pc/track_v2", tc.path, 1)
+		ctx, cancel := context.WithTimeout(context.Background(), 24*time.Second)
+		signed, err := signRequest(ctx, root, spec)
+		cancel()
+		if (err == nil) != tc.valid || tc.valid && len(signed) != 2 {
+			t.Fatalf("unexpected native route decision: %s", tc.path)
+		}
+	}
+}
+
 func TestNativeDecode(t *testing.T) {
 	root := nativeRoot(t)
 	for _, iv := range []int{8, 16} {
@@ -89,158 +107,46 @@ func TestNativeDecode(t *testing.T) {
 		t.Fatal("isolated decoder accepted malformed input")
 	}
 }
-func TestNativeConvertFixtures(t *testing.T) {
+func TestNativeM4APassthrough(t *testing.T) {
 	root := nativeRoot(t)
-	cases := []struct {
-		name                     string
-		rate, channels, min, max int
-	}{
-		{"aac-lc.m4a", 48000, 1, 4000, 7000}, {"aac-lc.aac", 44100, 2, 44100, 53000},
-		{"aac-he.m4a", 44100, 2, 44100, 53000}, {"aac-he.aac", 44100, 2, 44100, 53000},
-		{"aac-hev2.m4a", 44100, 2, 44100, 53000}, {"aac-hev2.aac", 44100, 2, 44100, 53000},
-		{"aac-fullscale.m4a", 44100, 2, 44100, 53000}, {"aac-transient.m4a", 44100, 2, 44100, 53000},
+	data, e := os.ReadFile(filepath.Join(root, "test", "fixtures", "aac-editlist.m4a"))
+	if e != nil || !nativeM4A(data) {
+		t.Fatal("verified AAC-LC fixture unavailable")
 	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			input, e := os.ReadFile(filepath.Join(root, "test", "fixtures", c.name))
-			if e != nil || len(input) > 65536 {
-				t.Fatal("AAC validation fixture unavailable")
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 24*time.Second)
-			result, e := convertAAC(ctx, root, input)
-			cancel()
-			if e != nil || !nativeFLAC(result) {
-				t.Fatal("isolated AAC conversion failed")
-			}
-			// STREAMINFO packs sample rate, channels, precision and total samples in 64 bits.
-			info := binary.BigEndian.Uint64(result[18:26])
-			rate := int(info >> 44)
-			channels := int(info>>41&7) + 1
-			precision := int(info>>36&31) + 1
-			frames := int(info & 0xfffffffff)
-			if rate != c.rate || channels != c.channels || precision != 24 || frames < c.min || frames > c.max {
-				t.Fatal("converted FLAC stream metadata mismatch")
-			}
-			reference := nativeReferencePCM(t, root, input, c.name)
-			actual := nativeReferencePCM(t, root, result, "converted.flac")
-			if len(reference) == 0 || len(actual) != len(reference) {
-				t.Fatal("conversion changed decoded sample count")
-			}
-			// Both platforms use FFmpeg. One 24-bit step is 256 in signed 32-bit PCM.
-			width, threshold := 4, int64(256)
-			if runtime.GOOS == "darwin" {
-				if trim := m4aGapless(input); trim != nil && uint64(frames)*uint64(trim.timescale) != trim.samples*uint64(rate) {
-					t.Fatal("gapless conversion changed valid sample count")
-				}
-			}
-			maxDifference, nonzero := comparePCM(t, reference, actual, width)
-			t.Logf("frames=%d referenceMaximumDifference=%d", frames, maxDifference)
-			if c.name == "aac-fullscale.m4a" {
-				positivePeaks := 0
-				for i := 0; i < len(reference); i += 4 {
-					if int32(binary.LittleEndian.Uint32(reference[i:])) >= 2147483392 {
-						positivePeaks++
-						if int32(binary.LittleEndian.Uint32(actual[i:])) < 0 {
-							t.Fatal("positive peak reversed polarity")
-						}
-					}
-				}
-				if positivePeaks == 0 {
-					t.Fatal("full-scale fixture did not exercise positive saturation")
-				}
-			}
-			if maxDifference > threshold {
-				t.Errorf("reference PCM maximum difference: %d", maxDifference)
-			}
-			if !nonzero {
-				t.Fatal("conversion produced silent PCM")
-			}
-		})
+	w := newWorker(root)
+	defer w.close()
+	// Exercise the real isolated CENC decoder, format guard and private bridge.
+	encrypted := encryptM4AFixture(data)
+	data, e = decodeWithKey(encrypted, fixtureKey)
+	if e != nil || !nativeM4A(data) {
+		t.Fatal("matching-resource fixture invalid")
 	}
+	w.download = func(context.Context, string) ([]byte, error) { return encrypted, nil }
+	grant := fixtureGrant(fixtureCandidate("aac", "higher", fixtureAuth()))
+	frame, _ := json.Marshal(map[string]any{"op": "music", "method": "stream", "session": session{Version: 1, DeviceID: "1234567890123456", InstallID: "123456789012345"}, "params": map[string]any{"id": "123", "quality": "standard", "grant": grant}})
 	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Second)
 	defer cancel()
-	if _, e := convertAAC(ctx, root, []byte("malformed audio")); e != errUnavailable {
-		t.Fatal("native converter accepted malformed audio")
+	raw, e := w.handle(ctx, frame)
+	if e != nil {
+		t.Fatal("native M4A stream failed")
+	}
+	result, ok := raw.(*streamResult)
+	if !ok || result.Type != "m4a" || result.Quality != "standard" || result.Size != len(data) {
+		t.Fatal("native M4A metadata mismatch")
+	}
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}, Timeout: time.Second}
+	defer client.CloseIdleConnections()
+	res, e := client.Get(result.URL)
+	if e != nil {
+		t.Fatal("native bridge unavailable")
+	}
+	defer res.Body.Close()
+	body, e := io.ReadAll(res.Body)
+	if e != nil || res.Header.Get("Content-Type") != "audio/mp4" || !bytes.Equal(body, data) {
+		t.Fatal("native M4A bytes changed")
 	}
 }
-func comparePCM(t *testing.T, reference, actual []byte, width int) (int64, bool) {
-	t.Helper()
-	if len(reference) != len(actual) || len(actual)%width != 0 {
-		t.Fatal("invalid PCM framing")
-	}
-	maxDifference := int64(0)
-	nonzero := false
-	sample := func(b []byte) int64 {
-		if width == 4 {
-			return int64(int32(binary.LittleEndian.Uint32(b)))
-		}
-		v := int32(b[0]) | int32(b[1])<<8 | int32(b[2])<<16
-		return int64(v << 8 >> 8)
-	}
-	for i := 0; i < len(actual); i += width {
-		a, b := sample(actual[i:i+width]), sample(reference[i:i+width])
-		if a != 0 {
-			nonzero = true
-		}
-		d := a - b
-		if d < 0 {
-			d = -d
-		}
-		if d > maxDifference {
-			maxDifference = d
-		}
-	}
-	return maxDifference, nonzero
-}
-func nativeReferencePCM(t *testing.T, plugin string, data []byte, name string) []byte {
-	t.Helper()
-	scratch, e := os.MkdirTemp("", "qishui-verify-")
-	if e != nil {
-		t.Fatal("reference scratch unavailable")
-	}
-	defer cleanupScratch(scratch)
-	input := filepath.Join(scratch, name)
-	if os.WriteFile(input, data, 0600) != nil {
-		t.Fatal("reference input unavailable")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Second)
-	defer cancel()
-	if runtime.GOOS == "windows" {
-		exe := filepath.Join(scratch, "verify.exe")
-		if copyPrivate(filepath.Join(plugin, "runtime", "native", "ffmpeg.exe"), exe) != nil {
-			t.Fatal("reference decoder unavailable")
-		}
-		runner := filepath.Join(plugin, "runtime", "native", "windows-runner.exe")
-		args := []string{"--root", scratch, "--parent", processID(), "--timeout-ms", "22000", "--", exe, "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1"}
-		out, e := runIsolated(ctx, runner, args, nil, 2*1024*1024, scratch, true)
-		if e != nil {
-			t.Fatal("isolated reference PCM decode failed")
-		}
-		return out
-	}
-	exe := filepath.Join(plugin, "runtime", "native", "ffmpeg")
-	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1"}
-	if trim := m4aGapless(data); trim != nil {
-		args = gaplessArgs(args, trim)
-	}
-	home, e := os.UserHomeDir()
-	if e != nil {
-		t.Fatal("reference home unavailable")
-	}
-	policy, e := sandboxPolicy(scratch, []string{exe, input}, home)
-	if e != nil {
-		t.Fatal("reference sandbox unavailable")
-	}
-	out, e := runIsolated(ctx, "/usr/bin/sandbox-exec", append([]string{"-p", policy, exe}, args...), nil, 2*1024*1024, scratch, false)
-	if e != nil {
-		t.Fatal("isolated reference PCM decode failed")
-	}
-	return out
-}
-func processID() string { // Kept fixed-format; never appears in diagnostics.
-	b, _ := json.Marshal(os.Getpid())
-	return string(b)
-}
+func processID() string { b, _ := json.Marshal(os.Getpid()); return string(b) }
 func TestNativeIPCEOF(t *testing.T) {
 	root := nativeRoot(t)
 	ext := ""

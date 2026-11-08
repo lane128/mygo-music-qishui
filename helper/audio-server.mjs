@@ -23,7 +23,7 @@ export async function audioServer({ limit = 256 * 1024 * 1024, ttl = 15 * 60 * 1
     const entry = entries.get(req.url)
     if (!entry) { res.writeHead(404).end(); return }
     const { data, type } = entry
-    const headers = { 'Content-Type': type === 'flac' ? 'audio/flac' : type === 'ogg' ? 'audio/ogg' : 'audio/mpeg', 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }
+    const headers = { 'Content-Type': type === 'flac' ? 'audio/flac' : type === 'ogg' ? 'audio/ogg' : type === 'm4a' ? 'audio/mp4' : 'audio/mpeg', 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' }
     let start = 0, end = data.length - 1, status = 200
     if (req.headers.range) {
       const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range)
@@ -47,7 +47,7 @@ export async function audioServer({ limit = 256 * 1024 * 1024, ttl = 15 * 60 * 1
   return {
     add(stream) {
       prune()
-      if (closed || !Buffer.isBuffer(stream.data) || !stream.data.length || stream.data.length > limit || !['flac', 'mp3', 'ogg'].includes(stream.type)) throw error('unavailable')
+      if (closed || !Buffer.isBuffer(stream.data) || !stream.data.length || stream.data.length > limit || !['flac', 'mp3', 'ogg', 'm4a'].includes(stream.type)) throw error('unavailable')
       while (bytes + stream.data.length > limit || entries.size >= 5) discard(entries.keys().next().value)
       const key = '/' + randomBytes(24).toString('hex')
       entries.set(key, { data: stream.data, type: stream.type, expires: now() + ttl })

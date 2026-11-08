@@ -77,8 +77,9 @@ func encryptedFixture(format string, ivSize int, subs []subSample, subFlag bool)
 			sencData = append(sencData, be32(s.encrypted)...)
 		}
 	}
+	handler := mpbox("hdlr", be32(0), be32(0), []byte("soun"))
 	movie := func(offset int) []byte {
-		return mpbox("moov", mpbox("trak", mpbox("mdia", mpbox("minf", mpbox("stbl", stsd, mpbox("stsz", zero, zero, be32(1), be32(len(plain))), mpbox("stco", zero, be32(1), be32(offset)), mpbox("stsc", zero, be32(1), be32(1), be32(1), be32(1)), mpbox("senc", flags, be32(1), sencData))))))
+		return mpbox("moov", mpbox("trak", mpbox("mdia", handler, mpbox("minf", mpbox("stbl", stsd, mpbox("stsz", zero, zero, be32(1), be32(len(plain))), mpbox("stco", zero, be32(1), be32(offset)), mpbox("stsc", zero, be32(1), be32(1), be32(1), be32(1)), mpbox("senc", flags, be32(1), sencData))))))
 	}
 	return bytes.Join([][]byte{ftyp, movie(len(ftyp) + len(movie(0)) + 8), mpbox("mdat", plain)}, nil)
 }

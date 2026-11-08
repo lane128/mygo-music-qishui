@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"mygo-music/internal/lyrics"
 	"mygo-music/internal/music"
 )
 
@@ -31,7 +32,11 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 	original := http.DefaultTransport
 	count := new(atomic.Int32)
 	var discoveries, radios atomic.Int32
-	var lastPlayed atomic.Value
+	var following, userFollowing, albumSaved atomic.Bool
+	following.Store(true)
+	albumSaved.Store(true)
+	var lastPlayed, playlistOrder atomic.Value
+	playlistOrder.Store([]string{"91", "92"})
 	track := func(id string) map[string]any {
 		return map[string]any{"id": id, "name": "Fixture Song", "duration": 180000,
 			"artists": []any{map[string]any{"id": "92", "name": "Artist"}}, "album": map[string]any{"id": "93", "name": "Album", "cover_url": "https://p3-luna.douyinpic.com/img/history-first.jpg"}}
@@ -45,7 +50,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 		}}}
 	}
 	http.DefaultTransport = qishuiAuthTransport(func(r *http.Request) (*http.Response, error) {
-		public := (r.URL.Host == "beta-luna.douyin.com" && r.URL.Path == "/luna/h5/seo_track") || (r.URL.Host == "api.qishui.com" && (strings.HasPrefix(r.URL.Path, "/luna/pc/artists/92") || r.URL.Path == "/luna/pc/albums/93" || strings.HasPrefix(r.URL.Path, "/luna/pc/search/") || r.URL.Path == "/luna/pc/sug"))
+		public := (r.URL.Host == "beta-luna.douyin.com" && r.URL.Path == "/luna/h5/seo_track") || (r.URL.Host == "api.qishui.com" && (strings.HasPrefix(r.URL.Path, "/luna/pc/artists/92") || strings.HasPrefix(r.URL.Path, "/luna/pc/artists/99") || r.URL.Path == "/luna/pc/albums/93" || strings.HasPrefix(r.URL.Path, "/luna/pc/search/") || r.URL.Path == "/luna/pc/sug"))
 		if r.URL.Scheme != "https" || (!public && r.URL.Host != "api.qishui.com") {
 			return nil, fmt.Errorf("unexpected fixture endpoint")
 		}
@@ -59,13 +64,17 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 		}
 		signed := false
 		switch r.URL.Path {
-		case "/luna/pc/me/recently-played-media", "/luna/pc/feed/mode", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/feed/song-tab", "/luna/pc/track_v2":
+		case "/luna/pc/me/recently-played-media", "/luna/pc/feed/mode", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/feed/song-tab", "/luna/pc/track_v2", "/luna/me/collection/artist", "/luna/me/playlist/media/sort", "/luna/users/199", "/luna/pc/me/follow", "/luna/pc/me/unfollow":
 			signed = true
 		}
 		if strings.HasPrefix(r.URL.Path, "/luna/pc/comments") || strings.HasPrefix(r.URL.Path, "/luna/pc/me/collection/") || strings.HasPrefix(r.URL.Path, "/luna/pc/me/playlist/") || (r.URL.Path == "/luna/pc/me/playlist" && (r.Method == "POST" || r.Header.Get("X-"+"Helios") != "")) {
 			signed = true
 		}
 		var payload struct {
+			UserID       string   `json:"user_id"`
+			PlaylistID   string   `json:"playlist_id"`
+			ArtistIDs    []string `json:"artist_ids"`
+			AlbumIDs     []string `json:"album_ids"`
 			Text         string   `json:"text"`
 			Name         string   `json:"name"`
 			GroupID      string   `json:"group_id"`
@@ -159,9 +168,9 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 				}
 				body = `{"playlist":{"id":"96"}}`
 			} else if signed {
-				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":1,"type":2,"owner":{"id":"7123456789012345678"}},{"id":"95","title":"Liked fixture","type":1,"owner":{"id":"7123456789012345678"}}]}`
+				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":2,"type":2,"owner":{"id":"7123456789012345678"}},{"id":"95","title":"Liked fixture","type":1,"owner":{"id":"7123456789012345678"}}]}`
 			} else {
-				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":1,"type":2,"owner":{"id":"7123456789012345678"}}]}`
+				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":2,"type":2,"owner":{"id":"7123456789012345678"}}]}`
 			}
 		case "/luna/pc/comments":
 			if r.URL.Query().Get("group_id") != "91" {
@@ -178,6 +187,39 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 				return nil, fmt.Errorf("invalid comment creation")
 			}
 			body = `{"created_comment":"42"}`
+		case "/luna/me/collection/artist":
+			artists := []any{}
+			if following.Load() {
+				artists = append(artists, map[string]any{"id": "92", "name": "Fixture Artist"})
+			}
+			result = map[string]any{"artists": artists, "has_more": false}
+		case "/luna/pc/me/collection/mixed":
+			kinds := r.URL.Query()["item_types"]
+			if len(kinds) != 2 || kinds[0] != "album" || kinds[1] != "playlist" {
+				return nil, fmt.Errorf("lost mixed collection item types")
+			}
+			items := []any{}
+			if albumSaved.Load() {
+				items = append(items, map[string]any{"item_type": "album", "album": map[string]any{"id": "93", "name": "Fixture Album"}})
+			}
+			if len(items) == 0 {
+				// The live empty-account response omits list and pagination fields.
+				result = map[string]any{"status_info": map[string]any{}}
+			} else {
+				result = map[string]any{"mixed_collections": items, "has_more": false}
+			}
+		case "/luna/pc/me/collection/artist", "/luna/pc/me/collection/artist/delete":
+			if len(payload.ArtistIDs) != 1 || payload.ArtistIDs[0] != "92" {
+				return nil, fmt.Errorf("invalid artist collection")
+			}
+			following.Store(!strings.HasSuffix(r.URL.Path, "/delete"))
+			body = `{}`
+		case "/luna/pc/me/collection/album", "/luna/pc/me/collection/album/delete":
+			if len(payload.AlbumIDs) != 1 || payload.AlbumIDs[0] != "93" {
+				return nil, fmt.Errorf("invalid album collection")
+			}
+			albumSaved.Store(!strings.HasSuffix(r.URL.Path, "/delete"))
+			body = `{}`
 		case "/luna/pc/me/collection/media", "/luna/pc/me/collection/media/delete":
 			if len(payload.Media) != 1 || payload.Media[0].ID != "91" || payload.Media[0].Type != "track" {
 				return nil, fmt.Errorf("invalid collection mutation")
@@ -185,6 +227,12 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			body = `{}`
 		case "/luna/pc/me/collection/playlist", "/luna/pc/me/collection/playlist/delete", "/luna/pc/me/playlist/update", "/luna/pc/me/playlist/delete", "/luna/pc/me/playlist/media/append", "/luna/pc/me/playlist/media/delete":
 			body = `{}`
+		case "/luna/me/playlist/media/sort":
+			if payload.PlaylistID != "94" || len(payload.Media) != 2 || payload.Media[0].ID != "92" || payload.Media[1].ID != "91" || payload.Media[0].Type != "track" || payload.Media[1].Type != "track" {
+				return nil, fmt.Errorf("invalid complete playlist order")
+			}
+			playlistOrder.Store([]string{"92", "91"})
+			body = `{"status_code":0}`
 		case "/luna/pc/playlist/detail":
 			id := r.URL.Query().Get("playlist_id")
 			if id == "empty-fixture" {
@@ -192,7 +240,8 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			} else if id == "95" {
 				result = map[string]any{"playlist": map[string]any{"id": id, "title": "Liked fixture", "count_tracks": 1}, "media_resources": []any{resource("91")}, "has_more": false}
 			} else if id == "94" {
-				result = map[string]any{"playlist": map[string]any{"id": id, "title": "Fixture Playlist", "count_tracks": 1}, "media_resources": []any{resource("91")}, "has_more": false}
+				order := playlistOrder.Load().([]string)
+				result = map[string]any{"playlist": map[string]any{"id": id, "title": "Fixture Playlist", "count_tracks": 2}, "media_resources": []any{resource(order[0]), resource(order[1])}, "has_more": false}
 			} else {
 				return nil, fmt.Errorf("unexpected playlist identity")
 			}
@@ -213,6 +262,31 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 				}
 				result = map[string]any{"media": []any{resource(id)}, "has_more": false}
 			}
+		case "/luna/pc/me/follow", "/luna/pc/me/unfollow":
+			if payload.UserID != "199" {
+				return nil, fmt.Errorf("catalog ID used as user ID")
+			}
+			userFollowing.Store(strings.HasSuffix(r.URL.Path, "/follow"))
+			state := 0
+			if userFollowing.Load() {
+				state = 6
+			}
+			result = map[string]any{"user_id": "199", "follow_status": state}
+		case "/luna/users/199":
+			if r.URL.Query().Get("user_id") != "199" || !r.URL.Query().Has("sec_uid") {
+				return nil, fmt.Errorf("invalid user-state query")
+			}
+			state := 3
+			if userFollowing.Load() {
+				state = 7
+			}
+			result = map[string]any{"user": map[string]any{"id": "199"}, "my_user_state": map[string]any{"follow_status": state}}
+		case "/luna/pc/artists/99":
+			body = `{"artist_info":{"id":"99","name":"Bound artist","user_artist_type":2,"user":{"id":"199"}}}`
+		case "/luna/pc/artists/99/tracks":
+			body = `{"tracks":[],"has_more":false}`
+		case "/luna/pc/artists/99/albums":
+			body = `{"albums":[],"has_more":false}`
 		case "/luna/pc/artists/92":
 			if r.Method != "GET" || !r.URL.Query().Has("locate_item_id") || r.URL.Query().Has("user_id") {
 				return nil, fmt.Errorf("invalid artist detail query")
@@ -287,7 +361,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			if !public || r.URL.Query().Get("track_id") != "91" {
 				return nil, fmt.Errorf("invalid public lyrics request")
 			}
-			result = map[string]any{"seo_track": map[string]any{"track": track("91")}, "lyric": map[string]any{"content": "[1000,2000]Fixture"}}
+			result = map[string]any{"seo_track": map[string]any{"track": track("91")}, "lyric": map[string]any{"content": "[1000,2000]<0,500,0>Fix<800,1200,0>ture", "translations": map[string]any{"cn": "[00:01.00]测试歌词"}}}
 		default:
 			return nil, fmt.Errorf("unexpected fixture request")
 		}
@@ -307,7 +381,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 // Real plugin exports must map native library/comment calls through the host's actual JavaScript and HTTP bridges.
 func verifyQishuiCoreCapabilities(t *testing.T, p *Plugin) {
 	t.Helper()
-	for _, capability := range []string{"album", "suggest", "recent", "liked", "isLiked", "like", "savePlaylist", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "comments", "likeComment", "postComment"} {
+	for _, capability := range []string{"album", "suggest", "recent", "liked", "isLiked", "like", "savePlaylist", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "comments", "likeComment", "postComment", "followArtist", "saveAlbum", "savedAlbums", "movePlaylistTrack"} {
 		if !p.Can(capability) {
 			t.Fatalf("missing capability %s", capability)
 		}
@@ -315,6 +389,48 @@ func verifyQishuiCoreCapabilities(t *testing.T, p *Plugin) {
 	album, err := p.Album("93")
 	if err != nil || album.Album.Released != "2025-10-01" || len(album.Tracks) != 1 || album.Tracks[0].Source != "qishui-app-login" {
 		t.Fatalf("album mapping failed: %v", err)
+	}
+	for _, on := range []bool{false, true} {
+		if err := p.FollowArtist("92", on); err != nil {
+			t.Fatalf("follow artist: %v", err)
+		}
+		artist, err := p.Artist("92")
+		if err != nil || artist.Artist.Following != on {
+			t.Fatalf("artist follow state: %v", err)
+		}
+		if err := p.SaveAlbum("93", on); err != nil {
+			t.Fatalf("save album: %v", err)
+		}
+		album, err := p.Album("93")
+		if err != nil || album.Album.Saved != on {
+			t.Fatalf("album saved state: %v", err)
+		}
+		page, err := p.SavedAlbums(0)
+		want := 0
+		if on {
+			want = 1
+		}
+		if err != nil || len(page.Albums) != want || page.More {
+			t.Fatalf("saved album page: %v", err)
+		}
+	}
+	for _, on := range []bool{true, false} {
+		if err := p.FollowArtist("99", on); err != nil {
+			t.Fatalf("bound artist follow: %v", err)
+		}
+		page, err := p.Artist("99")
+		if err != nil || page.Artist.ID != "99" || page.Artist.Following != on {
+			t.Fatalf("bound artist state: %v", err)
+		}
+	}
+	if _, err := p.Playlist("94"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.MovePlaylistTrack("94", 0, 1); err != nil {
+		t.Fatalf("playlist move bridge: %v", err)
+	}
+	if list, err := p.Playlist("94"); err != nil || len(list.Tracks) != 2 || list.Tracks[0].ID != "92" || list.Tracks[1].ID != "91" {
+		t.Fatalf("playlist order did not reach the server: %v", err)
 	}
 	for _, kind := range []music.SearchKind{music.SearchArtists, music.SearchAlbums, music.SearchPlaylists} {
 		page, err := p.Search("Fixture", kind, 0)
@@ -422,7 +538,7 @@ func main(){
    result=map[string]string{"x-helios":"fixture-helios","x-medusa":"fixture-medusa"}
   }else if spec.Method=="stream"{
    if spec.Params.ID!="91" || spec.Params.Quality!="high" || spec.Params.Grant.Track.ID!="91" {os.Exit(1)}
-   result=map[string]string{"url":"http://127.0.0.1:12345/fixture","type":"flac","quality":"high"}
+   result=map[string]string{"url":"http://127.0.0.1:12345/fixture","type":"m4a","quality":"standard"}
   }else{os.Exit(1)}
   if enc.Encode(map[string]any{"ok":true,"result":result})!=nil{os.Exit(1)}
  }
@@ -480,7 +596,7 @@ func main(){
 		t.Fatalf("playlist list mapping failed: %v", err)
 	}
 	pl, err := p.Playlist("94")
-	if err != nil || len(pl.Tracks) != 1 || pl.Tracks[0].Duration != 180000 {
+	if err != nil || len(pl.Tracks) != 2 || pl.Tracks[0].Duration != 180000 {
 		t.Fatalf("playlist tracks mapping failed: %v", err)
 	}
 	empty, err := p.Playlist("empty-fixture")
@@ -567,7 +683,7 @@ func main(){
 		t.Fatalf("lyrics mapping failed: %v", err)
 	}
 	stream, err := p.Stream("91", "high")
-	if err != nil || stream.Type != "flac" || stream.Quality != "high" {
+	if err != nil || stream.Type != "m4a" || stream.Quality != "standard" {
 		t.Fatalf("stream mapping failed: %v", err)
 	}
 	p.Close()
@@ -646,23 +762,36 @@ func TestQishuiPluginNetworkOnlyLogin(t *testing.T) {
 	if lists, e := again.Playlists(); e != nil || len(lists) != 2 || lists[0].ID != "94" {
 		t.Fatalf("network-only library failed: %v", e)
 	}
-	if list, e := again.Playlist("94"); e != nil || len(list.Tracks) != 1 || list.Tracks[0].ID != "91" {
+	if list, e := again.Playlist("94"); e != nil || len(list.Tracks) != 2 || list.Tracks[0].ID != "91" {
 		t.Fatalf("network-only playlist failed: %v", e)
 	}
 	if list, e := again.Playlist("empty-fixture"); e != nil || len(list.Tracks) != 0 {
 		t.Fatalf("network-only empty playlist failed: %v", e)
 	}
-	if result, e := again.Search("Fixture", music.SearchTracks, 0); e != nil || len(result.Tracks) != 1 || result.Tracks[0].ID != "91" {
+	if result, e := again.Search("Fixture", music.SearchTracks, 0); e != nil || len(result.Tracks) != 1 || result.Tracks[0].ID != "91" || result.Tracks[0].URL != "https://music.douyin.com/qishui/share/track?track_id=91" {
 		t.Fatalf("network-only search failed: %v", e)
 	}
-	if words, e := again.Lyrics("91"); e != nil || words.LRC != "[00:01.00]Fixture" {
-		t.Fatalf("network-only lyrics failed: %v", e)
+	words, e := again.Lyrics("91")
+	if e != nil || words.LRC != "[00:01.00]Fixture" || len(words.Lines) != 1 || len(words.Lines[0].Words) != 7 || words.Lines[0].Translation != "测试歌词" {
+		t.Fatalf("network-only timed lyrics failed: %v", e)
 	}
-	if artist, e := again.Artist("92"); e != nil || artist.Artist.ID != "92" || len(artist.Tracks) != 1 {
-		t.Fatalf("network-only artist failed: %v", e)
+	lines := lyrics.FromSource(words)
+	if len(lines) != 1 || lines[0].Words[3].Start != 1800*time.Millisecond || lines[0].Words[6].End != 3*time.Second {
+		t.Fatal("host discarded official word timing")
 	}
-	if album, e := again.Album("93"); e != nil || album.Album.ID != "93" || len(album.Tracks) != 1 {
-		t.Fatalf("network-only album failed: %v", e)
+	if a.Page != "my-library" {
+		t.Fatal("account lost its profile destination")
+	}
+	page, e := again.Browse(a.Page)
+	if e != nil || page.Title != a.Name || len(page.Sections) == 0 {
+		t.Fatalf("account profile failed: %v", e)
+	}
+	// Logged-in detail pages require signed account state; unknown is never reported as false.
+	if _, e := again.Artist("92"); e == nil {
+		t.Fatal("artist following state unexpectedly worked without process permission")
+	}
+	if _, e := again.Album("93"); e == nil {
+		t.Fatal("album saved state unexpectedly worked without process permission")
 	}
 	for _, kind := range []music.SearchKind{music.SearchArtists, music.SearchAlbums, music.SearchPlaylists} {
 		if result, e := again.Search("Fixture", kind, 0); e != nil || len(result.Artists)+len(result.Albums)+len(result.Playlists) != 1 {
@@ -681,7 +810,7 @@ func TestQishuiPluginNetworkOnlyLogin(t *testing.T) {
 	if b, e := again.Account(); e != nil || b != nil {
 		t.Fatal("sandbox sign-out retained credentials")
 	}
-	if calls.Load() != 19 {
+	if calls.Load() != 20 {
 		t.Fatal("unexpected authentication or unsigned catalog requests")
 	}
 }

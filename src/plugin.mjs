@@ -28,6 +28,8 @@ async function closeMusic() {
   catalogState.search.clear();
   catalogState.comments.clear();
   catalogState.commentLocks.clear();
+  catalogState.collections?.clear();
+  catalogState.playlistOrder?.clear();
   // Old continuations retain only the discarded account's cache object.
   catalogState = newCatalogState();
   feedStates.clear();
@@ -236,7 +238,7 @@ function authProfile(payload, commerce) {
     }
   };
   return {
-    id: String(p.id), name: memberName(nickname, tier),
+    id: String(p.id), name: memberName(nickname, tier), page: 'my-library',
     imageUrl: image(p.avatar_url) || image(p.larger_avatar_url) || image(p.medium_avatar_url, "~c5_300x300.jpg") || image(p.thumb_avatar_url, "~c5_100x100.jpg") || image(p.url_avatar, "~c5_300x300.jpg"),
   };
 }
@@ -640,6 +642,7 @@ async function music(method, params = {}, persistent = false) {
     switch (method) {
       case 'home': result = await catalog.home(); break;
       case 'playlists': result = await catalog.playlists(); break;
+      case 'profile': result = await catalog.profile(); break;
       case 'playlist': result = await catalog.playlist(params.id); break;
       case 'artist': result = await catalog.artist(params.id); break;
       case 'album': result = await catalog.album(params.id); break;
@@ -649,6 +652,10 @@ async function music(method, params = {}, persistent = false) {
       case 'isLiked': result = await catalog.isLiked(params.ids); break;
       case 'like': await catalog.like(params.id, params.on); break;
       case 'savePlaylist': await catalog.savePlaylist(params.id, params.on); break;
+      case 'followArtist': await catalog.followArtist(params.id, params.on); break;
+      case 'saveAlbum': await catalog.saveAlbum(params.id, params.on); break;
+      case 'savedAlbums': result = await catalog.savedAlbums(params.offset); break;
+      case 'movePlaylistTrack': await catalog.movePlaylistTrack(params.id, params.from, params.to); break;
       case 'createPlaylist': result = await catalog.createPlaylist(params.name); break;
       case 'renamePlaylist': await catalog.renamePlaylist(params.id, params.name); break;
       case 'deletePlaylist': await catalog.deletePlaylist(params.id); break;
@@ -708,6 +715,10 @@ export async function liked({ offset = 0 } = {}) { return (await music('liked', 
 export async function isLiked({ ids }) { return (await music('isLiked', { ids })).result; }
 export async function like({ id, on }) { await music('like', { id, on }); }
 export async function savePlaylist({ id, on }) { await music('savePlaylist', { id, on }); }
+export async function followArtist({ id, on }) { await music('followArtist', { id, on }); }
+export async function saveAlbum({ id, on }) { await music('saveAlbum', { id, on }); }
+export async function savedAlbums({ offset = 0 } = {}) { return (await music('savedAlbums', { offset })).result; }
+export async function movePlaylistTrack({ id, from, to }) { await music('movePlaylistTrack', { id, from, to }); }
 export async function createPlaylist({ name }) { return (await music('createPlaylist', { name })).result; }
 export async function renamePlaylist({ id, name }) { await music('renamePlaylist', { id, name }); }
 export async function deletePlaylist({ id }) { await music('deletePlaylist', { id }); }
@@ -794,6 +805,7 @@ function discoveryResult(reply) {
   return result;
 }
 export async function browse({ page }) {
+  if (page === 'my-library') return (await music('profile')).result;
   if (page === "listening-modes" || page === "scene-modes") {
     const attempt = generation;
     const reply = await music("modePage", { page });

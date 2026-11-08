@@ -13,11 +13,11 @@ import (
 	"testing"
 )
 
-func qishuiReleaseAudioFiles() []string {
+func qishuiReleaseNativeFiles() []string {
 	if runtime.GOOS == "windows" {
-		return []string{"runtime/native/metasecml.dll", "runtime/native/ffmpeg.exe", "runtime/native/windows-runner.exe", "runtime/native/FFMPEG-LICENSE", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE"}
+		return []string{"runtime/native/metasecml.dll", "runtime/native/windows-runner.exe", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE"}
 	}
-	return []string{"runtime/native/libMetaSecML.dylib", "runtime/native/ffmpeg", "runtime/native/FFMPEG-LICENSE", "runtime/native/FFMPEG-README.txt", "runtime/native/FFMPEG-BUILD.json", "runtime/native/FFMPEG-SOURCE.tar.xz"}
+	return []string{"runtime/native/libMetaSecML.dylib", "runtime/native/GO-LICENSE"}
 }
 
 // Exercise the release's actual runtime requirements before publishing anything.
@@ -26,10 +26,10 @@ func TestQishuiReleaseRuntimeLayout(t *testing.T) {
 	if root == "" {
 		t.Skip("QISHUI_PLUGIN_DIR is not set")
 	}
-	for _, name := range qishuiReleaseAudioFiles() {
+	for _, name := range qishuiReleaseNativeFiles() {
 		info, err := os.Stat(filepath.Join(root, name))
 		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
-			t.Fatalf("missing required release audio asset: %s", name)
+			t.Fatalf("missing required release native asset: %s", name)
 		}
 	}
 }
@@ -81,7 +81,7 @@ func TestQishuiPublishedRelease(t *testing.T) {
 	}
 	installed := filepath.Join(dir, "qishui-app-login")
 	worker := filepath.Join("bin", "qishui-helper-"+runtime.GOOS+"-"+runtime.GOARCH)
-	native := qishuiReleaseAudioFiles()
+	native := qishuiReleaseNativeFiles()
 	if runtime.GOOS == "windows" {
 		worker += ".exe"
 	}

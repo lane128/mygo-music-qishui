@@ -1,10 +1,10 @@
-// Download verified build inputs into a new directory. Never executes downloads.
-import { mkdir, readFile, readdir, realpath, writeFile } from 'node:fs/promises'
+// Download verified signer SDK inputs into a new directory. Never executes downloads.
+import { mkdir, readdir, realpath, writeFile } from 'node:fs/promises'
 import { gunzipSync } from 'node:zlib'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { unzipSync } from 'fflate'
-import { WINDOWS_DOWNLOADS, WINDOWS_FILES, WINDOWS_FFMPEG_FILES, WINDOWS_SOURCES, checkDigest, checkWindowsPE, inspectWindowsAudio } from './runtime-assets.mjs'
+import { WINDOWS_DOWNLOADS, WINDOWS_FILES, checkDigest, checkWindowsPE } from './runtime-assets.mjs'
 
 const MAX_ARCHIVE = 256 * 1024 * 1024
 export function extractSelected(data, distribution) {
@@ -47,11 +47,10 @@ export function extractSelected(data, distribution) {
   return result
 }
 
-export async function prepareWindows(output, { fetcher = fetch, ffmpegDirectory } = {}) {
+export async function prepareWindows(output, { fetcher = fetch } = {}) {
   if (!output || !path.isAbsolute(output)) throw new Error('Provide a new empty absolute output directory')
   await mkdir(output, { recursive: true })
   if ((await readdir(output)).length) throw new Error('Runtime output directory must be empty')
-  if (!ffmpegDirectory || !path.isAbsolute(ffmpegDirectory)) throw new Error('Provide the absolute audio-only FFmpeg build directory as the second argument')
   for (const distribution of WINDOWS_DOWNLOADS) {
     const response = await fetcher(distribution.url, { redirect: 'error', signal: AbortSignal.timeout(120000) })
     if (!response.ok || !response.body || Number(response.headers.get('content-length')) > MAX_ARCHIVE) throw new Error('Runtime download failed')
@@ -64,17 +63,11 @@ export async function prepareWindows(output, { fetcher = fetch, ffmpegDirectory 
     const files = extractSelected(Buffer.concat(chunks), distribution)
     for (const [name, bytes] of files) await writeFile(path.join(output, name), bytes, { flag: 'wx' })
   }
-  for (const [name, expected] of Object.entries(WINDOWS_FFMPEG_FILES)) {
-    const bytes = await readFile(path.join(ffmpegDirectory, name))
-    checkDigest(bytes, expected, name)
-    if (name === 'ffmpeg.exe') inspectWindowsAudio(bytes)
-    await writeFile(path.join(output, name), bytes, { flag: 'wx' })
-  }
-  await writeFile(path.join(output, 'SOURCES.json'), JSON.stringify(WINDOWS_SOURCES, null, 2) + '\n', { flag: 'wx' })
+  await writeFile(path.join(output, 'SOURCES.json'), JSON.stringify(WINDOWS_DOWNLOADS, null, 2) + '\n', { flag: 'wx' })
   return output
 }
 
 const entry = process.argv[1] && await realpath(process.argv[1]).catch(() => null)
 if (entry && import.meta.url === pathToFileURL(entry).href) {
-  console.log(await prepareWindows(process.argv[2], { ffmpegDirectory: process.argv[3] }))
+  console.log(await prepareWindows(process.argv[2]))
 }

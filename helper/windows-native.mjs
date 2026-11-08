@@ -7,7 +7,7 @@ import path from 'node:path'
 import { pluginRoot } from './runtime.mjs'
 import { error } from './protocol.mjs'
 
-import { aacConversionArgs, MAX_CONVERTED_AUDIO as MAX_AUDIO } from './ffmpeg-args.mjs'
+const MAX_AUDIO = 128 * 1024 * 1024
 
 export function createWindowsNative({ plugin = pluginRoot, node = process.execPath, platform = process.platform, arch = process.arch, spawnProcess = spawn } = {}) {
   async function regular(file) {
@@ -23,7 +23,7 @@ export function createWindowsNative({ plugin = pluginRoot, node = process.execPa
       if (platform !== 'win32' || arch !== 'x64') throw error('setup')
       if (signal?.aborted) throw error('canceled')
       const launcher = await regular(path.join(plugin, 'runtime/native/windows-runner.exe'))
-      const executable = await regular(program === 'node' ? node : path.join(plugin, 'runtime/native/ffmpeg.exe'))
+      const executable = await regular(node)
       root = await mkdtemp(path.join(tmpdir(), 'qishui-windows-'))
       const staged = path.join(root, program + '.exe')
       await copyFile(executable, staged)
@@ -97,19 +97,6 @@ export function createWindowsNative({ plugin = pluginRoot, node = process.execPa
         const decoder = path.join(root, 'resource.cjs')
         await writeFile(decoder, script, { mode: 0o600 })
         return run([decoder, '--decode'], JSON.stringify({ audio: data.toString('base64'), auth }), MAX_AUDIO)
-      }, signal)
-    },
-    async convertAAC(data, { signal } = {}) {
-      if (!Buffer.isBuffer(data) || data.length > MAX_AUDIO) throw error('unavailable')
-      return isolated('ffmpeg', [], async (root, run) => {
-        const input = path.join(root, 'input.m4a'), output = path.join(root, 'output.flac')
-        await writeFile(input, data, { mode: 0o600 })
-        await run(aacConversionArgs(input, output), Buffer.alloc(0), 4096)
-        const info = await stat(output)
-        if (info.size <= 42 || info.size >= MAX_AUDIO) throw error('unavailable')
-        const result = await readFile(output)
-        if (result.toString('ascii', 0, 4) !== 'fLaC') throw error('unavailable')
-        return result
       }, signal)
     },
   }

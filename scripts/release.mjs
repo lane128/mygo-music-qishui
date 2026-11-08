@@ -50,7 +50,7 @@ export const PLATFORM_TARGETS = [
 ]
 
 const SOURCE_EXCLUSIONS = /^(?:dist|node_modules|\.git|\.claude)(?:\/|$)/
-const AUDIO_PATH = /(?:^|\/)[^/]*(?:audio|gapless|ffmpeg|aac|flac|decoder|convert|playback|media)[^/]*$/i
+const AUDIO_PATH = /(?:^|\/)[^/]*(?:audio|gapless|ffmpeg|aac|flac|m4a|decoder|convert|playback|media)[^/]*$/i
 const AUTH_PATH = /(?:^|\/)[^/]*(?:auth|login|session|account|membership|member|profile|cookie)[^/]*$/i
 const COMPATIBILITY_FILES = new Set([
   'plugin.json', 'helper/protocol.mjs', 'helper/client-profile.mjs',
@@ -525,7 +525,7 @@ export async function packagedTestInputs(directory, mode) {
   const names = ['bin', 'runtime/native', 'test/fixtures']
   if (mode === 'native') names.push('test/native-worker.test')
   else if (mode === 'adapters') {
-    names.push('helper', ...['worker', 'gapless', 'ffmpeg', 'playback'].map(name => 'test/' + name + '.test.mjs'))
+    names.push('helper', ...['worker', 'gapless', 'playback'].map(name => 'test/' + name + '.test.mjs'))
   } else throw new ReleaseError('Unknown packaged test mode: ' + mode)
   const entries = await Promise.all(names.map(async name => {
     const absolute = path.join(directory, name)
@@ -575,7 +575,7 @@ export async function unpackZip(archive, destination) {
     const target = path.join(destination, name)
     await mkdir(path.dirname(target), { recursive: true })
     const executable = name.startsWith('bin/') ||
-      /^runtime\/native\/(?:qishui-sign|ffmpeg|audio-convert)(?:\.exe)?$/.test(name) ||
+      /^runtime\/native\/qishui-sign(?:\.exe)?$/.test(name) ||
       /^test\/[^/]+\.test(?:\.exe)?$/.test(name)
     await writeFile(target, Buffer.from(data), { flag: 'wx', mode: executable ? 0o755 : 0o644 })
     files++
@@ -652,10 +652,10 @@ export function compareRuntimeValidation(runtime, validation, { platform }) {
   }
 }
 
-async function verifyPackageContents({ root, dir, validation, version, layout, assets, platform, arch, runner }) {
+async function verifyPackageContents({ root, dir, validation, version, layout, assets, platform, arch }) {
   if (platform === 'darwin' && arch === 'amd64') {
-    assets = { ...assets, darwin: assets.darwinAMD64, darwinFfmpeg: assets.darwinAMD64Ffmpeg }
-    if (!assets.darwin || !assets.darwinFfmpeg) throw new ReleaseError('Intel macOS asset hashes are missing')
+    assets = { ...assets, darwin: assets.darwinAMD64 }
+    if (!assets.darwin) throw new ReleaseError('Intel macOS asset hashes are missing')
   }
   const files = await listFiles(dir)
   layout.checkPackageLayout(files, { validation })
@@ -672,9 +672,7 @@ async function verifyPackageContents({ root, dir, validation, version, layout, a
     'native/signer/licenses/provenance.json',
   ]
   if (platform === 'darwin') {
-    if (files.includes('runtime/native/audio-convert')) throw new ReleaseError('macOS package still contains the retired AudioToolbox converter')
     for (const name of Object.keys(assets.darwin || {})) required.push('runtime/native/' + name)
-    for (const name of Object.keys(assets.darwinFfmpeg || {})) required.push('runtime/native/' + name)
     required.push(`bin/qishui-helper-darwin-${arch}`, 'runtime/native/qishui-sign', 'runtime/native/NATIVE-BUILD.json', 'runtime/native/GO-LICENSE')
     if (arch === 'amd64') required.push('runtime/native/SOURCES.json')
   } else {
@@ -683,7 +681,6 @@ async function verifyPackageContents({ root, dir, validation, version, layout, a
       `bin/qishui-helper-windows-${arch}.exe`, 'runtime/native/qishui-sign.exe',
       'runtime/native/windows-runner.exe', 'runtime/native/NATIVE-BUILD.json',
       'runtime/native/GO-LICENSE', 'runtime/native/X-SYS-LICENSE',
-      'scripts/build-ffmpeg.mjs', 'scripts/ffmpeg-config.mjs',
       'native/windows-runner/main_windows.go', 'native/windows-runner/go.mod', 'native/windows-runner/go.sum',
     )
   }
@@ -701,18 +698,11 @@ async function verifyPackageContents({ root, dir, validation, version, layout, a
   if (nativeBuild.platform !== platform || nativeBuild.arch !== arch) throw new ReleaseError('Native build platform mismatch in final package')
   if (platform === 'darwin') {
     for (const [name, expected] of Object.entries(assets.darwin || {})) if (await sha256File(path.join(dir, 'runtime/native', name)) !== expected) throw new ReleaseError('Packaged native asset hash mismatch: ' + name)
-    for (const [name, expected] of Object.entries(assets.darwinFfmpeg || {})) if (await sha256File(path.join(dir, 'runtime/native', name)) !== expected) throw new ReleaseError('Packaged FFmpeg asset hash mismatch: ' + name)
-    if (assets.inspectDarwinAudio) {
-      const { inspectDarwinAudio } = await import('./runtime-assets.mjs')
-      inspectDarwinAudio(await readFile(path.join(dir, 'runtime/native/ffmpeg')), arch)
-    }
-    const signature = await runner.run('/usr/bin/codesign', ['--verify', '--strict', path.join(dir, 'runtime/native/ffmpeg')], { cwd: root, timeout: 60000 })
-    if (signature.status !== 0) throw new ReleaseError('Packaged macOS FFmpeg signature verification failed')
   }
   return { files: files.length, sourceFiles: source.checked, manifestVersions: { plugin: plugin.version, package: pkg.version, lock: lock.version } }
 }
 
-export async function checkFinalPackages({ root, version, extracted, assets, layout, platform, runner }) {
+export async function checkFinalPackages({ root, version, extracted, assets, layout, platform }) {
   const result = {}
   for (const item of extracted) {
     const entries = {}
@@ -724,7 +714,7 @@ export async function checkFinalPackages({ root, version, extracted, assets, lay
     item.entries = entries
     result[item.kind] = await verifyPackageContents({
       root, dir: item.dir, validation: item.kind === 'validation', version, layout,
-      assets, platform: item.platform, arch: item.arch, runner,
+      assets, platform: item.platform, arch: item.arch,
     })
   }
   const runtime = extracted.find(item => item.kind === 'runtime')
@@ -857,7 +847,7 @@ async function sourceTestEnvironment({ root, env }) {
     const ffmpeg = path.join(env.QISHUI_FFMPEG_DIR, 'ffmpeg')
     if (await stat(ffmpeg).then(info => info.isFile()).catch(() => false)) result.QISHUI_TEST_FFMPEG = ffmpeg
   }
-  const nativeFiles = ['bdms.node', 'libMetaSecML.dylib', 'ffmpeg'].map(name => path.join(root, 'runtime/native', name))
+  const nativeFiles = ['bdms.node', 'libMetaSecML.dylib'].map(name => path.join(root, 'runtime/native', name))
   if ((await Promise.all(nativeFiles.map(file => stat(file).then(info => info.isFile()).catch(() => false)))).every(Boolean)) {
     result.QISHUI_TEST_NATIVE = '1'
   }
@@ -1061,29 +1051,21 @@ export async function validateExpectedFiles(directory, expected, label) {
 
 async function validateAssets({ env, runner, expectedAssets }) {
   const nativeDir = await realpath(requireAbsolute(env.QISHUI_NATIVE_DIR, 'QISHUI_NATIVE_DIR'))
-  const ffmpegDir = await realpath(requireAbsolute(env.QISHUI_FFMPEG_DIR, 'QISHUI_FFMPEG_DIR'))
   const windowsDir = await realpath(requireAbsolute(env.QISHUI_WINDOWS_ASSETS, 'QISHUI_WINDOWS_ASSETS'))
   const intelNativeDir = await realpath(requireAbsolute(env.QISHUI_DARWIN_AMD64_NATIVE_DIR, 'QISHUI_DARWIN_AMD64_NATIVE_DIR'))
-  const intelFfmpegDir = await realpath(requireAbsolute(env.QISHUI_DARWIN_AMD64_FFMPEG_DIR, 'QISHUI_DARWIN_AMD64_FFMPEG_DIR'))
   const zig = requireAbsolute(env.QISHUI_ZIG, 'QISHUI_ZIG')
   const module = expectedAssets ? { ...expectedAssets } : await loadRuntimeAssets()
-  const darwin = module.DARWIN_FILES
-  const darwinFfmpeg = module.DARWIN_FFMPEG_FILES
-  const windows = module.WINDOWS_FILES
   const assets = {
-    darwin: await validateExpectedFiles(nativeDir, darwin, 'macOS native'),
-    darwinFfmpeg: await validateExpectedFiles(ffmpegDir, darwinFfmpeg, 'macOS FFmpeg'),
+    darwin: await validateExpectedFiles(nativeDir, module.DARWIN_FILES, 'macOS native'),
     darwinAMD64: await validateExpectedFiles(intelNativeDir, module.DARWIN_AMD64_FILES, 'Intel macOS native'),
-    darwinAMD64Ffmpeg: await validateExpectedFiles(intelFfmpegDir, module.DARWIN_AMD64_FFMPEG_FILES, 'Intel macOS FFmpeg'),
-    windows: await validateExpectedFiles(windowsDir, windows, 'Windows runtime'),
-    inspectDarwinAudio: typeof module.inspectDarwinAudio === 'function',
+    windows: await validateExpectedFiles(windowsDir, module.WINDOWS_FILES, 'Windows runtime'),
   }
   await requireFile(zig, 'Zig executable')
   const zigVersion = await runner.run(zig, ['version'], { timeout: 60000 })
   if (zigVersion.status !== 0 || !/^0\.15\.2\b/.test(zigVersion.stdout.trim())) throw new ReleaseError('QISHUI_ZIG must report version 0.15.2')
   return {
     ...assets,
-    directories: { native: nativeDir, ffmpeg: ffmpegDir, windows: windowsDir, intelNative: intelNativeDir, intelFfmpeg: intelFfmpegDir },
+    directories: { native: nativeDir, windows: windowsDir, intelNative: intelNativeDir },
     zig: { path: zig, sha256: await sha256File(zig), version: zigVersion.stdout.trim() },
   }
 }
@@ -1225,9 +1207,8 @@ export async function prepareRelease({
         const result = await ctx.runner.run(process.execPath, ['scripts/package.mjs', '--target', target.target], {
           cwd: root, log, timeout: 1800000,
           env: {
-            QISHUI_NATIVE_DIR: env.QISHUI_NATIVE_DIR, QISHUI_FFMPEG_DIR: env.QISHUI_FFMPEG_DIR,
+            QISHUI_NATIVE_DIR: env.QISHUI_NATIVE_DIR,
             QISHUI_DARWIN_AMD64_NATIVE_DIR: env.QISHUI_DARWIN_AMD64_NATIVE_DIR,
-            QISHUI_DARWIN_AMD64_FFMPEG_DIR: env.QISHUI_DARWIN_AMD64_FFMPEG_DIR,
             QISHUI_WINDOWS_ASSETS: env.QISHUI_WINDOWS_ASSETS, QISHUI_ZIG: env.QISHUI_ZIG,
           },
         })
@@ -1280,7 +1261,7 @@ export async function prepareRelease({
           const unpacked = ctx.state['unpack-' + target.name]
           checks[target.name] = await checkFinalPackages({
             root, version, extracted: unpacked.extracted, assets: ctx.state.prerequisites.assets,
-            layout: ctx.layout, platform: target.platform, runner: ctx.runner,
+            layout: ctx.layout, platform: target.platform,
           })
         }
         await writeTextLog(stageLogPath(ctx, 'package-checks'), JSON.stringify(checks, null, 2))
@@ -1340,7 +1321,7 @@ export async function prepareRelease({
       }),
       run: async (ctx, { log }) => {
         const validation = ctx.state['unpack-darwin-arm64'].extracted.find(item => item.kind === 'validation')
-        const names = ['worker', 'gapless', 'ffmpeg', 'playback']
+        const names = ['worker', 'gapless', 'playback']
         const files = names.map(name => path.join(validation.dir, 'test', name + '.test.mjs'))
         for (const file of files) await requireFile(file, 'adapter test ' + path.basename(file))
         const result = await ctx.runner.run(process.execPath, [
@@ -1349,7 +1330,6 @@ export async function prepareRelease({
           cwd: validation.dir, log, timeout: 900000,
           env: {
             PATH: '/usr/bin:/bin', QISHUI_NATIVE_ROOT: validation.dir,
-            QISHUI_TEST_FFMPEG: path.join(validation.dir, 'runtime/native/ffmpeg'),
             QISHUI_TEST_NATIVE: '1',
           },
         })
@@ -1460,8 +1440,8 @@ export const USAGE = `Usage:
   node scripts/release.mjs prepare --version X.Y.Z --host-source DIR [--host-source DIR]... [--base REF] [--output DIR] [--issue TEXT]...
 
 Environment for prepare:
-  QISHUI_NATIVE_DIR, QISHUI_FFMPEG_DIR, QISHUI_WINDOWS_ASSETS, QISHUI_ZIG (absolute)
-  QISHUI_DARWIN_AMD64_NATIVE_DIR, QISHUI_DARWIN_AMD64_FFMPEG_DIR (absolute)
+  QISHUI_NATIVE_DIR, QISHUI_WINDOWS_ASSETS, QISHUI_ZIG (absolute)
+  QISHUI_DARWIN_AMD64_NATIVE_DIR (absolute)
 Defaults: --base is the latest reachable v* tag; --output is dist/release-<version>.
 prepare never commits, pushes, tags or publishes. Windows/Intel/audio/account manual
 checks stay pending and keep readyForRelease false.`

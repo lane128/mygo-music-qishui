@@ -13,6 +13,33 @@ import (
 	"time"
 )
 
+var userInfoRouteCases = []struct {
+	path  string
+	valid bool
+}{
+	{"/luna/users/1", true},
+	{"/luna/users/" + strings.Repeat("1", 32), true},
+	{"/luna/users/", false}, {"/luna/users/x", false}, {"/luna/users/-1", false},
+	{"/luna/users/1/", false}, {"/luna/users/1/follows", false},
+	{"/luna/users/%31", false}, {"/luna/users/" + strings.Repeat("1", 33), false},
+}
+
+// The preferred user-info route must stay bounded to a single decimal ID.
+func TestUserInfoSigningRoute(t *testing.T) {
+	var req request
+	_ = json.Unmarshal(signFrame(), &req)
+	var base map[string]any
+	_ = json.Unmarshal(req.Params, &base)
+	for _, tc := range userInfoRouteCases {
+		base["url"] = "https://api.qishui.com" + tc.path + "?device_id=" + req.Session.DeviceID
+		raw, _ := json.Marshal(base)
+		_, err := parseSign(raw, req.Session.DeviceID)
+		if (err == nil) != tc.valid {
+			t.Fatalf("unexpected route decision: %s", tc.path)
+		}
+	}
+}
+
 func TestSignerRequestValidation(t *testing.T) {
 	var req request
 	if json.Unmarshal(signFrame(), &req) != nil {
