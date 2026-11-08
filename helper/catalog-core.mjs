@@ -6,6 +6,9 @@ import { signedClient } from './client-profile.mjs'
 import { discoveryBody, discoveryOf } from './exploration.mjs'
 import { homePage } from './home-page.mjs'
 import { HISTORY_ID, HISTORY_PATH, HISTORY_LIMIT, historyPlaylist } from './history.mjs'
+import * as Library from './library-actions.mjs'
+import { readComments, likeComment, postComment } from './comments.mjs'
+import { avatarURL } from './avatar.mjs'
 
 const PAGE_SIZE = 20
 const idOf = value => {
@@ -27,14 +30,27 @@ export function pcCatalogParams(session) {
     device_platform: 'windows', device_type: 'Windows', os_version: 'Windows 11', fp: session.deviceID,
   })
 }
-const isArtistPath = path => typeof path === 'string' && /^\/luna\/pc\/artists\/\d{1,32}$/.test(path)
-const paths = new Set([HISTORY_PATH, '/luna/pc/me/playlist', '/luna/pc/playlist/detail', '/luna/search/track', '/luna/pc/track_v2', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks'])
+export const isPublicCatalogPath = path => typeof path === 'string' && (
+  /^\/luna\/pc\/artists\/\d{1,32}(?:\/(?:tracks|albums))?$/.test(path) ||
+  /^\/luna\/pc\/albums\/\d{1,32}$/.test(path) ||
+  /^\/luna\/pc\/(?:search\/(?:artist|album|playlist)|sug)$/.test(path)
+)
+export const libraryWritePaths = [
+  '/luna/pc/comments/action', '/luna/pc/comments/create',
+  '/luna/pc/me/collection/media', '/luna/pc/me/collection/media/delete',
+  '/luna/pc/me/collection/playlist', '/luna/pc/me/collection/playlist/delete',
+  '/luna/pc/me/playlist/update', '/luna/pc/me/playlist/delete',
+  '/luna/pc/me/playlist/media/append', '/luna/pc/me/playlist/media/delete',
+]
+const paths = new Set([HISTORY_PATH, '/luna/pc/me/playlist', '/luna/pc/playlist/detail', '/luna/search/track', '/luna/pc/track_v2', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks', '/luna/pc/comments', ...libraryWritePaths])
 export async function requestJSON(session, path, { query = {}, body, signed = false, signal } = {}, deps = {}) {
-  const artist = isArtistPath(path)
+  const artist = isPublicCatalogPath(path)
   if (!paths.has(path) && !artist) throw error('response')
-  // Artist detail is a public GET. Do not forward account cookies or attempt
-  // signing: this public route was verified without either.
+  // Verified public metadata routes never receive account credentials.
   if (artist && (body !== undefined || signed)) throw error('response')
+  if (libraryWritePaths.includes(path) && (body === undefined || !signed)) throw error('response')
+  if (path === '/luna/pc/me/playlist' && body !== undefined && !signed) throw error('response')
+  if (path === '/luna/pc/comments' && (body !== undefined || !signed)) throw error('response')
   const cookies = validateSession(session)
   const params = signed || artist ? pcCatalogParams(session) : new URLSearchParams()
   for (const [name, value] of new URLSearchParams(query)) params.set(name, value)
@@ -155,7 +171,7 @@ function paginationOf(result, cursor) {
   return { cursor: next, more }
 }
 
-export function playlistOf(raw) {
+export function playlistOf(raw, accountId) {
   if (!raw || typeof (raw.title || raw.public_title) !== 'string') throw error('response')
   // Sidebar counts are optional metadata: a bad count must not hide every
   // valid playlist. Content loading still validates counts in playlistPage.
@@ -164,6 +180,7 @@ export function playlistOf(raw) {
     id: idOf(raw.id), name: raw.title || raw.public_title,
     ...(count == null ? {} : { trackCount: count }),
     imageUrl: image(raw.cover_url || raw.url_cover, '~c5_300x300.jpg'), description: raw.desc || '',
+    ...Library.playlistFlags(raw, accountId),
   }
 }
 
@@ -180,19 +197,117 @@ function tracksOf(resources) {
   return tracks
 }
 
+const catalogID = value => {
+  if (typeof value !== 'string' || !/^\d{1,32}$/.test(value)) throw error('response')
+  return value
+}
+export function artistOf(raw) {
+  if (!raw || typeof raw.name !== 'string' || !raw.name.trim()) throw error('response')
+  return { id: catalogID(idOf(raw.id)), name: raw.name, imageUrl: avatarURL(raw.url_avatar, 600) }
+}
+export function albumOf(raw) {
+  if (!raw || typeof raw.name !== 'string' || !raw.name.trim()) throw error('response')
+  const album = { id: catalogID(idOf(raw.id)), name: raw.name, imageUrl: image(raw.url_cover), artists: (raw.artists ?? []).map(artistOf) }
+  if (raw.release_date != null) {
+    const seconds = Number(raw.release_date)
+    if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > 253402300799) throw error('response')
+    if (seconds) album.released = new Date(seconds * 1000).toISOString().slice(0, 10)
+  }
+  return album
+}
+// New PC lists explicitly opt into another page. A terminal nonzero cursor is
+// common for artist albums; the older playlist fallback does not apply here.
+function pcPage(result, cursor, cursorField = 'next_cursor') {
+  if (!result || typeof result !== 'object' || Array.isArray(result) || (result.has_more != null && typeof result.has_more !== 'boolean')) throw error('response')
+  const raw = result[cursorField]
+  const next = raw == null ? '' : typeof raw === 'number' && Number.isSafeInteger(raw) && raw >= 0 ? String(raw) : raw
+  if (typeof next !== 'string' || next.length > 8192 || /[\x00-\x1f\x7f]/.test(next)) throw error('response')
+  const more = result.has_more === true
+  if (more && (!next || next === cursor)) throw error('response')
+  return { cursor: next, more }
+}
+
 export class Catalog {
-  constructor(session, { request = requestJSON, signal, publicFetch, uuid } = {}) {
+  constructor(session, { request = requestJSON, signal, publicFetch, uuid, state = {} } = {}) {
     validateSession(session)
     this.session = session
     this.request = (path, opts) => request(session, path, { ...opts, signal })
     this.signal = signal
     this.publicFetch = publicFetch
     this.uuid = uuid
+    this.state = state
+    this.state.search ??= new Map()
+    this.state.comments ??= new Map()
+    this.state.commentLocks ??= new Map()
+  }
+  async libraryPlaylists() {
+    const entries = new Map(), cursors = new Set([''])
+    let cursor = ''
+    for (let count = 0; count < 500; count++) {
+      const result = await this.request('/luna/pc/me/playlist', { query: { aid: '386088', version_code: '30020100', cursor, count: '50' } })
+      if (!Array.isArray(result.playlists)) throw error('response')
+      for (const raw of result.playlists) {
+        const id = idOf(raw?.id)
+        if (!entries.has(id)) entries.set(id, raw)
+      }
+      if (entries.size > 25000) throw error('response')
+      const next = pcPage(result, cursor)
+      if (!next.more) return [...entries.values()]
+      if (cursors.has(next.cursor)) throw error('response')
+      cursor = next.cursor
+      cursors.add(cursor)
+    }
+    throw error('response')
   }
   async playlists() {
-    const result = await this.request('/luna/pc/me/playlist', { query: { aid: '386088', version_code: '30020100' } })
-    if (!Array.isArray(result.playlists)) throw error('response')
-    return [...result.playlists.map(playlistOf), historyPlaylist()]
+    return [...(await this.libraryPlaylists()).map(raw => playlistOf(raw, this.session.account?.id)), historyPlaylist()]
+  }
+  like(id, on) { return Library.like(this, id, on) }
+  liked(offset) { return Library.liked(this, offset) }
+  isLiked(ids) { return ids?.length === 0 ? {} : Library.isLiked(this, ids) }
+  savePlaylist(id, on) { return Library.savePlaylist(this, id, on) }
+  async createPlaylist(name) { const id = await Library.createPlaylist(this, name); return { id, name: name.trim(), mine: true } }
+  renamePlaylist(id, name) { return Library.renamePlaylist(this, id, name) }
+  deletePlaylist(id) { return Library.deletePlaylist(this, id) }
+  addToPlaylist(id, trackIds) { return Library.addToPlaylist(this, id, trackIds) }
+  removeFromPlaylist(id, trackIds) { return Library.removeFromPlaylist(this, id, trackIds) }
+  recent() { return this.history().then(page => page.tracks) }
+  async commentOperation(trackId, operation) {
+    catalogID(trackId)
+    const locks = this.state.commentLocks
+    if (!locks.has(trackId) && locks.size >= 16) throw error('rateLimit')
+    const prior = locks.get(trackId) ?? Promise.resolve()
+    const pending = prior.catch(() => {}).then(() => {
+      if (this.signal?.aborted) throw error('canceled')
+      return operation()
+    })
+    locks.set(trackId, pending)
+    try { return await pending } finally { if (locks.get(trackId) === pending) locks.delete(trackId) }
+  }
+  comments(params) {
+    return this.commentOperation(params.trackId, () => readComments(this.request, { ...params, state: this.state.comments }))
+  }
+  likeComment(params) {
+    return this.commentOperation(params.trackId, async () => {
+      await likeComment(this.request, params)
+      const cached = this.state.comments.get(params.trackId)?.comments.find(comment => comment.id === params.commentId)
+      if (cached) {
+        if (cached.liked !== params.on && cached.likes != null) cached.likes = Math.max(0, cached.likes + (params.on ? 1 : -1))
+        cached.liked = params.on
+      }
+    })
+  }
+  postComment(params) {
+    return this.commentOperation(params.trackId, async () => {
+      const comment = await postComment(this.request, { ...params, account: this.session.account })
+      const cached = this.state.comments.get(params.trackId)
+      if (cached && !cached.ids.has(comment.id)) {
+        cached.comments.unshift(comment)
+        cached.ids.add(comment.id)
+        cached.total++
+      }
+      return comment
+    })
   }
   async playlistPage(id, cursor = '') {
     idOf(id)
@@ -210,15 +325,14 @@ export class Catalog {
     // Resolve that metadata from this account's library, never from a title or
     // a guessed system-list ID. A mismatched returned identity is never repaired.
     if (raw?.id == null || typeof (raw.title || raw.public_title) !== 'string') {
-      const library = await this.request('/luna/pc/me/playlist', { query: { aid: '386088', version_code: '30020100' } })
-      if (!Array.isArray(library.playlists)) throw error('response')
-      const known = library.playlists.find(item => item?.id != null && idOf(item.id) === id)
+      const library = await this.libraryPlaylists()
+      const known = library.find(item => item?.id != null && idOf(item.id) === id)
       if (!known) throw error('response')
       const detailCounts = raw && (raw.count_tracks != null || raw.resource_cnt?.track_cnt != null)
         ? { count_tracks: raw.count_tracks, resource_cnt: raw.resource_cnt } : {}
       raw = { ...known, ...raw, ...detailCounts, id, title: raw?.title || raw?.public_title || known.title || known.public_title }
     }
-    const playlist = playlistOf(raw)
+    const playlist = playlistOf(raw, this.session.account?.id)
     const count = playlistCount(raw)
     if (!Array.isArray(result.media_resources)) {
       const terminal = !page.more && (!page.cursor || page.cursor === '0' || page.cursor === cursor || result.has_more === false)
@@ -250,21 +364,107 @@ export class Catalog {
     }
     throw error('response')
   }
+  async artistList(id, kind) {
+    const entries = new Map(), cursors = new Set([''])
+    let cursor = ''
+    for (let page = 0; page < 200; page++) {
+      if (this.signal?.aborted) throw error('canceled')
+      const result = await this.request(`/luna/pc/artists/${id}/${kind}`, { query: { cursor, count: '50', ...(kind === 'tracks' ? { sort_type: '0' } : {}) } })
+      const next = pcPage(result, cursor)
+      if (result[kind] == null && (next.more || !result.status_info || typeof result.status_info !== 'object' || Array.isArray(result.status_info))) throw error('response')
+      const rows = result[kind] ?? []
+      if (!Array.isArray(rows) || rows.length > 1000) throw error('response')
+      for (const raw of rows) {
+        const entry = kind === 'tracks' ? trackOf(raw) : albumOf(raw)
+        if (!entries.has(entry.id)) entries.set(entry.id, entry)
+      }
+      if (entries.size > 10000) throw error('response')
+      if (!next.more) return [...entries.values()]
+      if (cursors.has(next.cursor)) throw error('response')
+      cursor = next.cursor
+      cursors.add(cursor)
+    }
+    throw error('response')
+  }
   async artist(id) {
-    if (typeof id !== 'string' || !/^\d{1,32}$/.test(id)) throw error('response')
+    catalogID(id)
     const result = await this.request(`/luna/pc/artists/${id}`, { query: { locate_item_id: '' } })
-    const raw = result.artist_info
-    if (!raw || idOf(raw.id) !== id || typeof raw.name !== 'string' || !raw.name.trim()) throw error('response')
-    const hot = result.hot_tracks ?? []
-    if (!Array.isArray(hot)) throw error('response')
+    const artist = artistOf(result.artist_info)
+    if (artist.id !== id) throw error('response')
+    const [tracks, albums] = await Promise.all([this.artistList(id, 'tracks'), this.artistList(id, 'albums')])
+    return { artist, tracks, albums }
+  }
+  async album(id) {
+    catalogID(id)
+    const result = await this.request(`/luna/pc/albums/${id}`, { query: { ignore_tracks: 'false' } })
+    const album = albumOf(result.album_info)
+    if (album.id !== id || (result.tracks != null && !Array.isArray(result.tracks))) throw error('response')
     const tracks = new Map()
-    for (const item of hot) {
-      const track = trackOf(item)
+    for (const raw of result.tracks ?? []) {
+      const track = trackOf(raw)
       if (!tracks.has(track.id)) tracks.set(track.id, track)
     }
-    // MyGO's native ArtistPage accepts profile + songs. The official detail
-    // endpoint supplies hot tracks; do not present videos as playable songs.
-    return { artist: { id, name: raw.name, imageUrl: image(raw.url_avatar) }, tracks: [...tracks.values()] }
+    return { album, tracks: [...tracks.values()] }
+  }
+  async suggest(query) {
+    if (typeof query !== 'string' || query.length > 512) throw error('response')
+    if (!query.trim()) return []
+    const result = await this.request('/luna/pc/sug', { query: { q: query, sug_scene: 'main', sug_search_id: this.uuid() } })
+    if (result.sugs != null && !Array.isArray(result.sugs)) throw error('response')
+    const suggestions = new Set()
+    for (const item of result.sugs ?? []) {
+      if (typeof item?.suggestion !== 'string') throw error('response')
+      if (item.suggestion.trim()) suggestions.add(item.suggestion)
+      if (suggestions.size === 20) break
+    }
+    return [...suggestions]
+  }
+  async entitySearch({ query, kind, offset }) {
+    const types = { artists: ['artist', artistOf], albums: ['album', albumOf], playlists: ['playlist', playlistOf] }
+    if (!Object.hasOwn(types, kind)) throw error('unsupported')
+    const [type, map] = types[kind]
+    const key = JSON.stringify([query, kind])
+    let state = this.state.search.get(key)
+    if (!state || offset === 0) {
+      state = { id: this.uuid(), cursor: '0', cursors: new Set(['0']), items: [], ids: new Set(), more: true, pages: 0, pending: null }
+      while (this.state.search.size >= 16) this.state.search.delete(this.state.search.keys().next().value)
+      this.state.search.set(key, state)
+    }
+    while (state.items.length <= offset && state.more) {
+      if (this.signal?.aborted) throw error('canceled')
+      if (!state.pending) state.pending = (async () => {
+        if (++state.pages > 500) throw error('response')
+        const result = await this.request(`/luna/pc/search/${type}`, { query: {
+          q: query, cursor: state.cursor, search_id: state.id, search_method: 'input', debug_params: '', from_search_id: '', search_scene: '',
+        } })
+        if (!Array.isArray(result.result_groups)) throw error('response')
+        const groups = result.result_groups.filter(group => group?.id === kind)
+        if (groups.length > 1) throw error('response')
+        const group = groups[0]
+        if (!group) {
+          if (result.result_groups.length) throw error('response')
+          state.more = false
+          return
+        }
+        const next = pcPage(group, state.cursor)
+        if (group.data != null && !Array.isArray(group.data)) throw error('response')
+        const additions = []
+        for (const item of group.data ?? []) {
+          const raw = item?.entity?.[type]
+          if (raw == null) continue
+          const entry = map(raw)
+          if (!state.ids.has(entry.id)) { state.ids.add(entry.id); additions.push(entry) }
+        }
+        if (state.ids.size > 10000 || (next.more && state.cursors.has(next.cursor))) throw error('response')
+        state.items.push(...additions)
+        state.more = next.more
+        state.cursor = next.cursor
+        state.cursors.add(next.cursor)
+      })().finally(() => { state.pending = null })
+      try { await state.pending } catch (failure) { if (this.state.search.get(key) === state) this.state.search.delete(key); throw failure }
+    }
+    const entries = state.items.slice(offset, offset + PAGE_SIZE)
+    return { result: { [kind]: entries, more: offset + entries.length < state.items.length || state.more } }
   }
   async played(id) {
     if (typeof id !== 'string' || !/^\d{1,32}$/.test(id)) throw error('response')
@@ -333,8 +533,8 @@ export class Catalog {
     return { tracks: [...tracks.values()], more, cursor: next }
   }
   async search({ query, kind = 'tracks', offset = 0, cursor }) {
-    if (kind !== 'tracks') throw error('unsupported')
-    if (typeof query !== 'string' || !query.trim() || query.length > 512 || !Number.isSafeInteger(offset) || offset < 0) throw error('response')
+    if (typeof query !== 'string' || !query.trim() || query.length > 512 || !Number.isSafeInteger(offset) || offset < 0 || offset > 10000) throw error('response')
+    if (kind !== 'tracks') return this.entitySearch({ query, kind, offset })
     if (cursor != null && (typeof cursor !== 'string' || cursor.length > 8192)) throw error('response')
     let skipped = 0
     let current = cursor ?? '0'

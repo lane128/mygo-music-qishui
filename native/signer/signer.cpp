@@ -308,7 +308,15 @@ static void validate(const Request& r) {
   require(start<r.url.size() && r.url[start]=='/');
   size_t q=r.url.find('?',start); require(q!=std::string::npos);
   std::string endpoint=r.url.substr(start,q-start);
-  const char* allowed[]={"/luna/pc/feed/mode","/luna/pc/feed/song-tab","/luna/pc/discover","/luna/pc/discover/mix","/luna/pc/feed/radio/tracks","/luna/pc/me/recently-played-media","/luna/pc/track_v2"};
+  const char* allowed[]={
+    "/luna/pc/feed/mode","/luna/pc/feed/song-tab","/luna/pc/discover","/luna/pc/discover/mix",
+    "/luna/pc/feed/radio/tracks","/luna/pc/me/recently-played-media","/luna/pc/track_v2",
+    "/luna/pc/comments","/luna/pc/comments/action","/luna/pc/comments/create",
+    "/luna/pc/me/playlist","/luna/pc/me/playlist/update","/luna/pc/me/playlist/delete",
+    "/luna/pc/me/playlist/media/append","/luna/pc/me/playlist/media/delete",
+    "/luna/pc/me/collection/media","/luna/pc/me/collection/media/delete",
+    "/luna/pc/me/collection/playlist","/luna/pc/me/collection/playlist/delete"
+  };
   bool found=false; for(const char* p:allowed) if(endpoint==p) found=true; require(found);
   size_t devices=0;
   for(size_t pos=q+1;pos<=r.url.size();) {

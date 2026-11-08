@@ -1,7 +1,7 @@
 // Music operations use private JSON-line pipe messages. Login runs in MyGO's sandbox.
 import readline from 'node:readline'
 import { error } from './protocol.mjs'
-import { validateSession } from './catalog-core.mjs'
+import { validateSession, libraryWritePaths } from './catalog-core.mjs'
 import { signRequest } from './native.mjs'
 import { audioServer } from './audio-server.mjs'
 
@@ -39,7 +39,7 @@ try {
       switch (spec.method) {
         case 'sign': {
           const url = new URL(params.url)
-          const paths = ['/luna/pc/me/recently-played-media', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks']
+          const paths = ['/luna/pc/me/recently-played-media', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks', '/luna/pc/track_v2', '/luna/pc/comments', '/luna/pc/me/playlist', ...libraryWritePaths]
           if (url.origin !== 'https://api.qishui.com' || url.username || url['pass' + 'word'] || url.hash || !paths.includes(url.pathname) || params.did !== spec.session.deviceID || url.searchParams.get('device_id') !== params.did) throw error('response')
           if (!params.headers || Object.keys(params.headers).length > 64 || Object.entries(params.headers).some(([key, value]) => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || typeof value !== 'string' || /[\r\n\0]/.test(value))) throw error('response')
           result = await signRequest({ url: url.href, headers: params.headers, did: params.did, signal })

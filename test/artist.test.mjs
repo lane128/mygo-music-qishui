@@ -1,110 +1,139 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { Catalog, requestJSON } from '../helper/catalog.mjs'
+import { Catalog, requestJSON, artistOf } from '../helper/catalog.mjs'
 import { sandbox, session, json, until } from './fixtures/plugin-sandbox.mjs'
 import { catalogService, track, stale } from './fixtures/catalog-service.mjs'
 
-const profile = (id = '92', extra = {}) => ({ artist_info: { id, name: 'Fixture Artist', url_avatar: { urls: ['https://p3-luna.douyinpic.com/img/artist.jpg'] } }, hot_tracks: [track('91')], ...extra })
+const profile = (id = '92') => ({ artist_info: { id, name: 'Fixture Artist', url_avatar: { urls: ['https://p3-luna.douyinpic.com/img/artist.jpg'] } }, hot_tracks: [track('99')] })
+const artistRoutes = (id = '92') => ({
+  [`/luna/pc/artists/${id}`]: [profile(id)],
+  [`/luna/pc/artists/${id}/tracks`]: [{ tracks: [track('91')], has_more: false }],
+  [`/luna/pc/artists/${id}/albums`]: [{ albums: [], has_more: false }],
+})
 
-// Host navigation passes an artist ID, never a name or a user ID. Preserve
-// large IDs through the real bundle, public HTTP parsing and native page shape.
-test('artist capability fetches a public detail GET without process permission and maps hot songs', async () => {
-  const id = '9223372036854775807', path = `/luna/pc/artists/${id}`
-  const service = catalogService({ [path]: [call => {
-    assert.equal(call.options.method, 'GET')
-    assert.equal(call.parsed.searchParams.get('locate_item_id'), '')
-    assert.equal(call.parsed.searchParams.has('user_id'), false)
-    assert.equal(call.options.body, undefined)
-    assert.equal(call.options.headers['X-SS-STUB'], undefined)
-    assert.equal(call.options.headers['X-Luna-Is-Local-User'], '0')
-    return new Response('{"artist_info":{"id":9223372036854775807,"name":"Fixture Artist","url_avatar":{"urls":["https://p3-luna.douyinpic.com/img/artist.jpg"]}},"hot_tracks":[{"id":7123456789012345678,"name":"Hot Song","duration":180000,"artists":[{"id":9223372036854775807,"name":"Fixture Artist"}],"album":{}}],"hot_mvs":[{"video_id":"ignored-video"}]}')
-  }] })
+// The full singles list starts at its own first cursor; hot songs cannot stand in for a complete catalogue.
+test('artist capability maps complete paged singles and albums without cookies or helper', async () => {
+  const id = '9223372036854775807', base = `/luna/pc/artists/${id}`
+  const routes = artistRoutes(id)
+  routes[base + '/tracks'] = [call => {
+    assert.equal(call.parsed.searchParams.get('cursor'), '')
+    return { tracks: [{ ...track('7123456789012345678'), artists: [{ id, name: 'Fixture Artist' }] }, track('2')], has_more: true, next_cursor: '50' }
+  }, call => {
+    assert.equal(call.parsed.searchParams.get('cursor'), '50')
+    return { tracks: [{ ...track('2'), name: 'Duplicate' }, track('3')], has_more: false }
+  }]
+  routes[base + '/albums'] = [{ albums: [{ id: '93', name: 'Fixture Album', release_date: 1759276800 }], next_cursor: '146' }]
+  const service = catalogService(routes)
   const s = await sandbox([], session, { allowSpawn: false, request: service.request })
   try {
     const page = await s.api.artist({ id })
     assert.equal(page.artist.id, id)
-    assert.equal(page.artist.name, 'Fixture Artist')
-    assert.equal(page.artist.imageUrl, 'https://p3-luna.douyinpic.com/img/artist.jpg~c5_375x375.jpg')
-    assert.equal(page.tracks[0].id, '7123456789012345678')
+    assert.equal(page.artist.imageUrl, 'https://p3-luna.douyinpic.com/img/artist.jpg')
+    assert.deepEqual(Array.from(page.tracks, t => t.id), ['7123456789012345678', '2', '3'])
     assert.equal(page.tracks[0].artists[0].id, id)
-    assert.equal(page.tracks[0].duration, 180000)
-    assert.equal(page.tracks.length, 1)
-    assert.equal(page.albums, undefined)
-    assert.deepEqual(s.calls, [])
+    assert.equal(page.tracks[1].name, 'Fixture Song')
+    assert.equal(page.albums[0].released, '2025-10-01')
     assert.equal(s.spawned(), 0)
-    assert.equal(s.closed(), 0)
+    assert.ok(service.calls.every(c => c.options.headers.Cookie === undefined))
   } finally { await s.api.signOut() }
 })
 
-// Missing optional hot-song arrays are an honest empty artist page, as in
-// the official client, while wrong identities or malformed songs stay errors.
-test('artist pages handle empty hot songs and missing images without hiding malformed responses', async () => {
-  for (const hot_tracks of [undefined, null, []]) {
-    const value = profile('92', { hot_tracks })
-    delete value.artist_info.url_avatar
-    const page = await new Catalog(session, { request: async () => value }).artist('92')
-    assert.deepEqual(page.tracks, [])
-    assert.equal(page.artist.imageUrl, undefined)
+// Artist photos use the avatar contract, not a cover suffix or a hardcoded CDN.
+test('artist photos preserve complete URLs and construct official square templates on the returned CDN', () => {
+  const complete = 'https://photos.example.test/artist/portrait-key.jpg?from=fixture&size=600%2f600+square&size=original'
+  for (const url_avatar of [complete, { urls: [complete] },
+    { uri: 'portrait-key', urls: [complete], template_prefix: 'tplv-avatar' },
+    { uri: 'opaque-other-id', urls: [complete], template_prefix: 'tplv-avatar', need_complete_url: true },
+  ]) assert.equal(artistOf({ id: '92', name: 'Artist', url_avatar }).imageUrl, complete)
+  const url_avatar = { uri: 'portrait-key', template_prefix: 'tplv-avatar', urls: ['http://unsafe.example.test/img/', 'https://preferred.example.test/img/'] }
+  assert.equal(artistOf({ id: '92', name: 'Artist', url_avatar }).imageUrl,
+    'https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:600:600.jpg')
+  for (const url_avatar of [undefined, { urls: ['javascript:fixture'] }, { uri: 'portrait-key', template_prefix: 'tplv-avatar' }]) {
+    assert.equal(artistOf({ id: '92', name: 'Artist', url_avatar }).imageUrl, undefined)
   }
-  for (const value of [
-    {}, { artist_info: null }, { artist_info: { id: '93', name: 'Wrong Artist' } },
-    { artist_info: { id: '92', name: '' } }, { artist_info: { id: '92', name: 1 } },
-    profile('92', { hot_tracks: {} }), profile('92', { hot_tracks: [null] }),
-    profile('92', { hot_tracks: [{ id: '91', duration: -1 }] }),
-  ]) await assert.rejects(new Catalog(session, { request: async () => value }).artist('92'), { kind: 'response' })
-  const unsafe = profile()
-  unsafe.artist_info.url_avatar = 'http://example.invalid/avatar'
-  assert.equal((await new Catalog(session, { request: async () => unsafe }).artist('92')).artist.imageUrl, undefined)
 })
 
-// Same-named singers and featured credits must remain distinct, and duplicate
-// hot-song rows must not reorder the artist's songs or replace their first data.
-test('artist pages keep duet IDs and official hot-song order', async () => {
+// Search cards and artist pages share the avatar mapper even though their response shapes differ.
+test('artist search keeps complete photos and uses the supplied template CDN through the bundle', async () => {
+  const complete = 'https://photos.example.test/artist/portrait-key.jpg?from=fixture&size=600%2f600+square'
+  const service = catalogService({ '/luna/pc/search/artist': [{ result_groups: [{ id: 'artists', data: [
+    { entity: { artist: { id: '92', name: 'First', url_avatar: { urls: [complete], uri: 'portrait-key', need_complete_url: true } } } },
+    { entity: { artist: { id: '93', name: 'Second', url_avatar: { urls: ['https://preferred.example.test/img/'], uri: 'portrait-key', template_prefix: 'tplv-avatar' } } } },
+  ], has_more: false }] }] })
+  const s = await sandbox([], session, { allowSpawn: false, request: service.request })
+  try {
+    const page = await s.api.search({ query: 'Fixture', kind: 'artists', offset: 0 })
+    assert.equal(page.artists[0].imageUrl, complete)
+    assert.equal(page.artists[1].imageUrl, 'https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:600:600.jpg')
+    assert.equal(s.spawned(), 0)
+  } finally { await s.api.signOut() }
+})
+
+// Missing protobuf arrays are empty only with an identified successful terminal response.
+test('artist lists accept terminal omitted arrays and reject malformed or looping responses', async () => {
+  const empty = await new Catalog(session, { request: async (_, path) => path.endsWith('/92') ? profile() : { status_info: { code: 0 } } }).artist('92')
+  assert.deepEqual(empty.tracks, [])
+  assert.deepEqual(empty.albums, [])
+  for (const value of [
+    {}, { tracks: {} }, { tracks: [null] }, { tracks: [{ id: '91', duration: -1 }] },
+    { tracks: [], has_more: true, next_cursor: '' },
+    { tracks: [], has_more: true, next_cursor: 'loop' },
+  ]) {
+    const catalog = new Catalog(session, { request: async (_, path) => path.endsWith('/92') ? profile() : path.endsWith('/albums') ? { albums: [] } : value })
+    await assert.rejects(catalog.artist('92'), { kind: 'response' })
+  }
+  for (const artist_info of [null, { id: '93', name: 'Wrong Artist' }, { id: '92', name: '' }, { id: '92', name: 1 }]) {
+    await assert.rejects(new Catalog(session, { request: async () => ({ artist_info }) }).artist('92'), { kind: 'response' })
+  }
+})
+
+// Same-named duet credits retain their distinct directory IDs and the official singles order.
+test('artist singles preserve duet IDs and first data across duplicate rows', async () => {
   const one = { ...track('2'), artists: [{ id: '92', name: 'Same Name' }, { id: '93', name: 'Same Name' }] }
-  const value = profile('93', { hot_tracks: [one, track('1'), { ...one, name: 'Duplicate' }] })
-  const page = await new Catalog(session, { request: async (_, path) => { assert.equal(path, '/luna/pc/artists/93'); return value } }).artist('93')
-  assert.equal(page.artist.id, '93')
+  const catalog = new Catalog(session, { request: async (_, path) => path.endsWith('/93') ? profile('93') : path.endsWith('/albums') ? { albums: [] } : { tracks: [one, track('1'), { ...one, name: 'Duplicate' }] } })
+  const page = await catalog.artist('93')
   assert.deepEqual(page.tracks.map(t => t.id), ['2', '1'])
   assert.deepEqual(page.tracks[0].artists.map(a => a.id), ['92', '93'])
   assert.equal(page.tracks[0].name, one.name)
 })
 
-// The new detail route must not become an arbitrary signed account API path.
-test('artist navigation rejects unsupported IDs and path injection before signing or HTTP', async () => {
+// Dynamic public paths remain GET-only numeric entity paths, never arbitrary signed account routes.
+test('artist navigation rejects invalid IDs and public path signing before HTTP', async () => {
   const s = await sandbox([], session, { request: () => { throw Error('unexpected HTTP') } })
   try {
     for (const id of [undefined, null, 92, '', 'name', '../me', '92/tracks', '92?user_id=1', '1'.repeat(33)]) await assert.rejects(s.api.artist({ id }), /歌手主页/)
     assert.equal(s.spawned(), 0)
-    for (const path of ['/luna/pc/artists/', '/luna/pc/artists/92/tracks', '/luna/pc/artists/%39%32', '/luna/pc/artists/../me']) {
-      await assert.rejects(requestJSON(session, path, { signed: true }, { sign: () => { throw Error('unexpected sign') } }), { kind: 'response' })
+    for (const path of ['/luna/pc/artists/', '/luna/pc/artists/92/tracks/extra', '/luna/pc/artists/%39%32', '/luna/pc/artists/../me']) {
+      await assert.rejects(requestJSON(session, path), { kind: 'response' })
     }
-    for (const options of [{ signed: true }, { body: { unexpected: true } }]) {
-      await assert.rejects(requestJSON(session, '/luna/pc/artists/92', options), { kind: 'response' })
+    for (const path of ['/luna/pc/artists/92', '/luna/pc/artists/92/tracks', '/luna/pc/artists/92/albums']) {
+      for (const options of [{ signed: true }, { body: {} }]) await assert.rejects(requestJSON(session, path, options), { kind: 'response' })
     }
     await s.api.signOut()
     await assert.rejects(s.api.artist({ id: '92' }), e => e.code === 'signIn')
   } finally { await s.api.signOut() }
 })
 
-// Artist failures are shown with fixed plugin text, never remote diagnostics.
-test('artist HTTP and response errors remain sanitized and do not produce placeholder profiles', async () => {
+// Artist failures expose only fixed plugin messages and never partially populated profiles.
+test('artist HTTP and response errors remain sanitized', async () => {
   for (const value of [json({ error_code: 7, message: 'private response' }), json({ error_code: 2046, message: 'private response' }), json({}, [], 401), json({}, [], 503), json(profile('93')), new Response('private malformed response')]) {
     const service = catalogService({ artist: [value] })
     const s = await sandbox([], session, { allowSpawn: false, request: service.request })
     try {
       await assert.rejects(s.api.artist({ id: '92' }), e => !e.message.includes('private'))
       assert.equal(service.for('artist').length, 1)
-      assert.equal(s.closed(), 0)
       assert.equal(s.timers.size, 0)
     } finally { await s.api.signOut() }
   }
 })
 
-// A late HTTP reply must not populate the new account's artist page.
-test('artist navigation aborts HTTP and rejects old-account replies after account replacement', async () => {
+// A reply from the old account cannot fill any of the new account's artist lists.
+test('artist navigation aborts and rejects late account replies', async () => {
   let finish, signal
   const pending = new Promise(resolve => { finish = resolve })
-  const service = catalogService({ artist: [call => { signal = call.options.signal; return pending }, profile()] })
+  const routes = artistRoutes()
+  routes['/luna/pc/artists/92'] = [call => { signal = call.options.signal; return pending }, profile()]
+  const service = catalogService(routes)
   const s = await sandbox([], session, { allowSpawn: false, request: service.request })
   const loading = s.api.artist({ id: '92' }), rejected = assert.rejects(loading, stale)
   await until(() => signal)
@@ -114,7 +143,6 @@ test('artist navigation aborts HTTP and rejects old-account replies after accoun
   await rejected
   assert.equal(signal.aborted, true)
   assert.equal((await s.api.artist({ id: '92' })).artist.id, '92')
-  assert.ok(service.for('artist').every(c => c.options.headers.Cookie === undefined))
   assert.equal(s.spawned(), 0)
   await s.api.signOut()
 })

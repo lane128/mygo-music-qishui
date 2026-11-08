@@ -15,6 +15,11 @@ var headerToken = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 var signPaths = map[string]bool{
 	"/luna/pc/me/recently-played-media": true, "/luna/pc/feed/mode": true, "/luna/pc/feed/song-tab": true,
 	"/luna/pc/discover": true, "/luna/pc/discover/mix": true, "/luna/pc/feed/radio/tracks": true, "/luna/pc/track_v2": true,
+	"/luna/pc/comments": true, "/luna/pc/comments/action": true, "/luna/pc/comments/create": true,
+	"/luna/pc/me/playlist": true, "/luna/pc/me/playlist/update": true, "/luna/pc/me/playlist/delete": true,
+	"/luna/pc/me/playlist/media/append": true, "/luna/pc/me/playlist/media/delete": true,
+	"/luna/pc/me/collection/media": true, "/luna/pc/me/collection/media/delete": true,
+	"/luna/pc/me/collection/playlist": true, "/luna/pc/me/collection/playlist/delete": true,
 }
 
 type signSpec struct {

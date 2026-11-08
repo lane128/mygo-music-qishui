@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { libraryWritePaths } from '../../helper/catalog-core.mjs'
 
 export const paths = {
   playlists: '/luna/pc/me/playlist', playlist: '/luna/pc/playlist/detail', history: '/luna/pc/me/recently-played-media',
@@ -26,20 +27,20 @@ export function catalogService(routes, { platform = 'mac' } = {}) {
   const queues = new Map(Object.entries(routes).map(([name, replies]) => [paths[name] || name, [...replies]]))
   const request = async (url, options) => {
     const parsed = new URL(url)
-    const artist = /^\/luna\/pc\/artists\/\d{1,32}$/.test(parsed.pathname)
-    if (!known.has(parsed.pathname) && !artist) return undefined // Authentication uses the sandbox's independent reply queue.
+    const artist = /^\/luna\/pc\/(?:artists\/\d{1,32}(?:\/(?:tracks|albums))?|albums\/\d{1,32}|search\/(?:artist|album|playlist)|sug)$/.test(parsed.pathname)
+    if (!known.has(parsed.pathname) && !artist && !queues.has(parsed.pathname)) return undefined // Authentication uses the sandbox's independent reply queue.
     const call = { url, parsed, options, body: options.body == null ? undefined : JSON.parse(options.body) }
     calls.push(call)
     assert.equal(options.redirect, 'error')
     assert.equal(parsed.hostname, parsed.pathname === paths.lyrics ? 'beta-luna.douyin.com' : 'api.qishui.com')
     if (parsed.pathname === paths.lyrics || artist) assert.equal(options.headers.Cookie, undefined)
     else assert.ok(options.headers.Cookie?.startsWith('sessionid='))
-    if (signed.has(parsed.pathname)) {
+    if (signed.has(parsed.pathname) || libraryWritePaths.includes(parsed.pathname) || parsed.pathname === '/luna/pc/comments' || (parsed.pathname === paths.playlists && (options.body != null || options.headers['x-helios'] != null))) {
       assert.equal(options.headers['x-helios'], 'fixture-helios')
       assert.equal(options.headers['x-medusa'], 'fixture-medusa')
       assert.equal(parsed.searchParams.get('device_platform'), platform)
       assert.equal(parsed.searchParams.get('version_name'), '3.7.0')
-      assert.equal(options.method, parsed.pathname === paths.history && options.body == null ? 'GET' : 'POST')
+      assert.equal(options.method, options.body == null ? 'GET' : 'POST')
       assert.equal(options.headers['X-SS-STUB'], options.body == null ? undefined : createHash('md5').update(options.body).digest('hex').toUpperCase())
     } else {
       assert.equal(options.headers['x-helios'], undefined)

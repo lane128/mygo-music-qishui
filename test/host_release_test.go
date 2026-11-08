@@ -88,7 +88,7 @@ func TestQishuiPublishedRelease(t *testing.T) {
 	if origin == nil || origin.Repo != release.Repo || origin.Version != "v"+version {
 		t.Fatal("installed plugin is missing its repository update origin")
 	}
-	for _, capability := range []string{"home", "playlist", "artist", "played", "search", "lyrics", "stream", "stations", "stationNext", "browse"} {
+	for _, capability := range []string{"home", "playlist", "artist", "album", "played", "search", "suggest", "lyrics", "stream", "stations", "stationNext", "browse", "comments", "likeComment", "postComment", "recent", "liked", "isLiked", "like", "savePlaylist", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist"} {
 		if !p.Can(capability) {
 			t.Fatal("published plugin is missing its music capabilities")
 		}

@@ -18,7 +18,8 @@ test('keeps the sidebar history cover unchanged without requesting history', asy
   const playlists = await catalog.playlists()
   assert.deepEqual(playlists.map(p => p.id), ['123', HISTORY_ID])
   assert.deepEqual(calls, ['/luna/pc/me/playlist'])
-  assert.equal(playlists.at(-1).mine, undefined)
+  assert.equal(playlists.at(-1).mine, true)
+  assert.equal(playlists.at(-1).fixed, true)
   assert.equal(playlists.at(-1).imageUrl, undefined)
 })
 

@@ -45,7 +45,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 		}}}
 	}
 	http.DefaultTransport = qishuiAuthTransport(func(r *http.Request) (*http.Response, error) {
-		public := (r.URL.Host == "beta-luna.douyin.com" && r.URL.Path == "/luna/h5/seo_track") || (r.URL.Host == "api.qishui.com" && r.URL.Path == "/luna/pc/artists/92")
+		public := (r.URL.Host == "beta-luna.douyin.com" && r.URL.Path == "/luna/h5/seo_track") || (r.URL.Host == "api.qishui.com" && (strings.HasPrefix(r.URL.Path, "/luna/pc/artists/92") || r.URL.Path == "/luna/pc/albums/93" || strings.HasPrefix(r.URL.Path, "/luna/pc/search/") || r.URL.Path == "/luna/pc/sug"))
 		if r.URL.Scheme != "https" || (!public && r.URL.Host != "api.qishui.com") {
 			return nil, fmt.Errorf("unexpected fixture endpoint")
 		}
@@ -62,7 +62,15 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 		case "/luna/pc/me/recently-played-media", "/luna/pc/feed/mode", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/feed/song-tab", "/luna/pc/track_v2":
 			signed = true
 		}
+		if strings.HasPrefix(r.URL.Path, "/luna/pc/comments") || strings.HasPrefix(r.URL.Path, "/luna/pc/me/collection/") || strings.HasPrefix(r.URL.Path, "/luna/pc/me/playlist/") || (r.URL.Path == "/luna/pc/me/playlist" && (r.Method == "POST" || r.Header.Get("X-"+"Helios") != "")) {
+			signed = true
+		}
 		var payload struct {
+			Text         string   `json:"text"`
+			Name         string   `json:"name"`
+			GroupID      string   `json:"group_id"`
+			CommentID    string   `json:"comment_id"`
+			ActionType   int      `json:"type"`
 			Cursor       string   `json:"cursor"`
 			RadioID      string   `json:"radio_id"`
 			Count        int      `json:"count"`
@@ -102,9 +110,9 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			if r.URL.Path == "/luna/pc/me/recently-played-media" && r.Header.Get("X-Luna-Is-Local-User") != "1" {
 				return nil, fmt.Errorf("history request lacks logged-in header")
 			}
-			if r.URL.Path == "/luna/pc/me/recently-played-media" && r.Method == "GET" {
+			if r.Method == "GET" {
 				if r.Header.Get("X-SS-Stub") != "" {
-					return nil, fmt.Errorf("invalid signed history GET")
+					return nil, fmt.Errorf("invalid signed catalog GET")
 				}
 			} else {
 				raw, err := io.ReadAll(r.Body)
@@ -136,11 +144,44 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 		case "/luna/pc/track_v2":
 			body = `{"track":{"id":"91","duration":180000},"track_player":{"video_model":{"video_duration":180,"video_list":[]}}}`
 		case "/luna/pc/me/playlist":
-			body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":1}]}`
+			if r.Method == "POST" {
+				if payload.Name != "New fixture" {
+					return nil, fmt.Errorf("invalid playlist creation")
+				}
+				body = `{"playlist":{"id":"96"}}`
+			} else if signed {
+				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":1,"type":2,"owner":{"id":"7123456789012345678"}},{"id":"95","title":"Liked fixture","type":1,"owner":{"id":"7123456789012345678"}}]}`
+			} else {
+				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":1,"type":2,"owner":{"id":"7123456789012345678"}}]}`
+			}
+		case "/luna/pc/comments":
+			if r.URL.Query().Get("group_id") != "91" {
+				return nil, fmt.Errorf("invalid comments track")
+			}
+			body = `{"comments":[{"id":"41","content":"Fixture comment","count_digged":3,"time_created":1735689600,"user_digged":true,"user":{"nickname":"Fixture Author","thumb_avatar_url":{"uri":"listener","urls":["https://images.example.test/aweme/100x100/listener.jpeg?from=fixture&size=100%2f100+small"],"need_complete_url":true}}}],"count":"1","has_more":false}`
+		case "/luna/pc/comments/action":
+			if payload.GroupID != "91" || payload.CommentID != "41" || (payload.ActionType != 1 && payload.ActionType != 3) {
+				return nil, fmt.Errorf("invalid comment thumb action")
+			}
+			body = `{}`
+		case "/luna/pc/comments/create":
+			if payload.GroupID != "91" || payload.Text != "Test comment" {
+				return nil, fmt.Errorf("invalid comment creation")
+			}
+			body = `{"created_comment":"42"}`
+		case "/luna/pc/me/collection/media", "/luna/pc/me/collection/media/delete":
+			if len(payload.Media) != 1 || payload.Media[0].ID != "91" || payload.Media[0].Type != "track" {
+				return nil, fmt.Errorf("invalid collection mutation")
+			}
+			body = `{}`
+		case "/luna/pc/me/collection/playlist", "/luna/pc/me/collection/playlist/delete", "/luna/pc/me/playlist/update", "/luna/pc/me/playlist/delete", "/luna/pc/me/playlist/media/append", "/luna/pc/me/playlist/media/delete":
+			body = `{}`
 		case "/luna/pc/playlist/detail":
 			id := r.URL.Query().Get("playlist_id")
 			if id == "empty-fixture" {
 				body = `{"playlist":{"id":"empty-fixture","title":"Empty fixture"},"next_cursor":"0"}`
+			} else if id == "95" {
+				result = map[string]any{"playlist": map[string]any{"id": id, "title": "Liked fixture", "count_tracks": 1}, "media_resources": []any{resource("91")}, "has_more": false}
 			} else if id == "94" {
 				result = map[string]any{"playlist": map[string]any{"id": id, "title": "Fixture Playlist", "count_tracks": 1}, "media_resources": []any{resource("91")}, "has_more": false}
 			} else {
@@ -167,7 +208,21 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			if r.Method != "GET" || !r.URL.Query().Has("locate_item_id") || r.URL.Query().Has("user_id") {
 				return nil, fmt.Errorf("invalid artist detail query")
 			}
-			result = map[string]any{"artist_info": map[string]any{"id": "92", "name": "Fixture Artist", "url_avatar": map[string]any{"urls": []string{"https://p3-luna.douyinpic.com/img/artist.jpg"}}}, "hot_tracks": []any{track("91")}}
+			result = map[string]any{"artist_info": map[string]any{"id": "92", "name": "Fixture Artist", "url_avatar": map[string]any{"urls": []string{"https://preferred.example.test/img/"}, "uri": "portrait-key", "template_prefix": "tplv-avatar"}}, "hot_tracks": []any{track("91")}}
+		case "/luna/pc/artists/92/tracks":
+			result = map[string]any{"tracks": []any{track("91")}, "has_more": false}
+		case "/luna/pc/artists/92/albums":
+			body = `{"albums":[{"id":"93","name":"Fixture Album","artists":[{"id":"92","name":"Artist"}],"release_date":1759276800}],"next_cursor":"146"}`
+		case "/luna/pc/albums/93":
+			result = map[string]any{"album_info": map[string]any{"id": "93", "name": "Fixture Album", "release_date": 1759276800}, "tracks": []any{track("91")}}
+		case "/luna/pc/search/artist":
+			body = `{"result_groups":[{"id":"artists","data":[{"entity":{"artist":{"id":"92","name":"Artist","url_avatar":{"urls":["https://photos.example.test/artist/portrait-key.jpg?from=fixture&size=600%2f600+square"],"uri":"portrait-key","need_complete_url":true}}}}],"has_more":false}]}`
+		case "/luna/pc/search/album":
+			body = `{"result_groups":[{"id":"albums","data":[{"entity":{"album":{"id":"93","name":"Fixture Album"}}}],"has_more":false}]}`
+		case "/luna/pc/search/playlist":
+			body = `{"result_groups":[{"id":"playlists","data":[{"entity":{"playlist":{"id":"94","title":"Fixture Playlist"}}}],"has_more":false}]}`
+		case "/luna/pc/sug":
+			body = `{"sugs":[{"suggestion":"Fixture"}]}`
 		case "/luna/search/track":
 			if r.URL.Query().Get("q") != "Fixture" || r.URL.Query().Get("device_platform") != "android" {
 				return nil, fmt.Errorf("invalid search parameters")
@@ -238,6 +293,85 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 	})
 	t.Cleanup(func() { http.DefaultTransport = original })
 	return count
+}
+
+// Real plugin exports must map native library/comment calls through the host's actual JavaScript and HTTP bridges.
+func verifyQishuiCoreCapabilities(t *testing.T, p *Plugin) {
+	t.Helper()
+	for _, capability := range []string{"album", "suggest", "recent", "liked", "isLiked", "like", "savePlaylist", "createPlaylist", "renamePlaylist", "deletePlaylist", "addToPlaylist", "removeFromPlaylist", "comments", "likeComment", "postComment"} {
+		if !p.Can(capability) {
+			t.Fatalf("missing capability %s", capability)
+		}
+	}
+	album, err := p.Album("93")
+	if err != nil || album.Album.Released != "2025-10-01" || len(album.Tracks) != 1 || album.Tracks[0].Source != "qishui-app-login" {
+		t.Fatalf("album mapping failed: %v", err)
+	}
+	for _, kind := range []music.SearchKind{music.SearchArtists, music.SearchAlbums, music.SearchPlaylists} {
+		page, err := p.Search("Fixture", kind, 0)
+		if err != nil || len(page.Artists)+len(page.Albums)+len(page.Playlists) != 1 {
+			t.Fatalf("entity search failed: %v", err)
+		}
+		if kind == music.SearchArtists && page.Artists[0].ImageURL != "https://photos.example.test/artist/portrait-key.jpg?from=fixture&size=600%2f600+square" {
+			t.Fatal("artist search photo URL changed in the host sandbox")
+		}
+	}
+	if suggestions, err := p.Suggest("Fix"); err != nil || len(suggestions) != 1 || suggestions[0] != "Fixture" {
+		t.Fatalf("suggestion mapping failed: %v", err)
+	}
+	if recent, err := p.Recent(); err != nil || len(recent) != 1 {
+		t.Fatalf("recent mapping failed: %v", err)
+	}
+	comments, err := p.Comments("91", 0)
+	if err != nil || len(comments.Comments) != 1 || comments.Total != 1 || !comments.Comments[0].Liked || comments.Comments[0].Likes != 3 || comments.Comments[0].Time != 1735689600000 {
+		t.Fatalf("comments mapping failed: %v", err)
+	}
+	if comments.Comments[0].AvatarURL != "https://images.example.test/aweme/100x100/listener.jpeg?from=fixture&size=100%2f100+small" {
+		t.Fatal("complete comment avatar URL changed in the host sandbox")
+	}
+	for _, on := range []bool{false, true} {
+		if err := p.LikeComment("91", "41", on); err != nil {
+			t.Fatalf("comment reaction failed: %v", err)
+		}
+	}
+	if comment, err := p.PostComment("91", "  Test comment  "); err != nil || comment.ID != "42" || comment.Text != "Test comment" || comment.Author != "SVIP · Test Account" {
+		t.Fatalf("comment posting failed: %v", err)
+	}
+	if states, err := p.IsLiked([]string{"91", "92"}); err != nil || !states["91"] || states["92"] {
+		t.Fatalf("liked states failed: %v", err)
+	}
+	if page, err := p.Liked(0); err != nil || len(page.Tracks) != 1 || page.More {
+		t.Fatalf("liked page failed: %v", err)
+	}
+	for _, on := range []bool{true, false} {
+		if err := p.Like("91", on); err != nil {
+			t.Fatalf("track collection failed: %v", err)
+		}
+		if err := p.SavePlaylist("96", on); err != nil {
+			t.Fatalf("playlist collection failed: %v", err)
+		}
+	}
+	if created, err := p.CreatePlaylist("  New fixture  "); err != nil || created.ID != "96" || created.Name != "New fixture" || !created.Mine {
+		t.Fatalf("playlist creation failed: %v", err)
+	}
+	if err := p.RenamePlaylist("94", "Renamed"); err != nil {
+		t.Fatalf("playlist rename failed: %v", err)
+	}
+	if err := p.AddToPlaylist("94", []string{"91"}); err != nil {
+		t.Fatalf("playlist append failed: %v", err)
+	}
+	if err := p.RemoveFromPlaylist("94", []string{"91"}); err != nil {
+		t.Fatalf("playlist remove failed: %v", err)
+	}
+	if err := p.DeletePlaylist("94"); err != nil {
+		t.Fatalf("playlist delete failed: %v", err)
+	}
+	if err := p.DeletePlaylist("95"); err == nil {
+		t.Fatal("fixed liked list became deletable")
+	}
+	if err := p.DeletePlaylist("qishui:history"); err == nil {
+		t.Fatal("local history became deletable")
+	}
 }
 
 // Actual sandbox authentication and grant HTTP must drive native music IPC without forwarding the saved account.
@@ -365,9 +499,10 @@ func main(){
 		t.Fatal("native artist navigation capability was not discovered")
 	}
 	ar, err := p.Artist(found.Tracks[0].Artists[0].ID)
-	if err != nil || ar.Artist.ID != "92" || ar.Artist.Name != "Fixture Artist" || ar.Artist.ImageURL == "" || len(ar.Tracks) != 1 || ar.Tracks[0].Source != "qishui-app-login" {
+	if err != nil || ar.Artist.ID != "92" || ar.Artist.Name != "Fixture Artist" || ar.Artist.ImageURL != "https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:600:600.jpg" || len(ar.Tracks) != 1 || ar.Tracks[0].Source != "qishui-app-login" {
 		t.Fatalf("artist page mapping failed: %v", err)
 	}
+	verifyQishuiCoreCapabilities(t, p)
 	if !p.Can("stations") || !p.Can("stationNext") || !p.Can("browse") {
 		t.Fatal("continuous listening capabilities were not discovered")
 	}
@@ -514,6 +649,17 @@ func TestQishuiPluginNetworkOnlyLogin(t *testing.T) {
 	if artist, e := again.Artist("92"); e != nil || artist.Artist.ID != "92" || len(artist.Tracks) != 1 {
 		t.Fatalf("network-only artist failed: %v", e)
 	}
+	if album, e := again.Album("93"); e != nil || album.Album.ID != "93" || len(album.Tracks) != 1 {
+		t.Fatalf("network-only album failed: %v", e)
+	}
+	for _, kind := range []music.SearchKind{music.SearchArtists, music.SearchAlbums, music.SearchPlaylists} {
+		if result, e := again.Search("Fixture", kind, 0); e != nil || len(result.Artists)+len(result.Albums)+len(result.Playlists) != 1 {
+			t.Fatalf("network-only entity search failed: %v", e)
+		}
+	}
+	if suggestions, e := again.Suggest("Fix"); e != nil || len(suggestions) != 1 {
+		t.Fatalf("network-only suggestions failed: %v", e)
+	}
 	if _, e := again.Home(); e == nil {
 		t.Fatal("native signing unexpectedly worked without a process permission")
 	}
@@ -523,7 +669,7 @@ func TestQishuiPluginNetworkOnlyLogin(t *testing.T) {
 	if b, e := again.Account(); e != nil || b != nil {
 		t.Fatal("sandbox sign-out retained credentials")
 	}
-	if calls.Load() != 10 {
+	if calls.Load() != 17 {
 		t.Fatal("unexpected authentication or unsigned catalog requests")
 	}
 }

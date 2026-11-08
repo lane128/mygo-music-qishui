@@ -20,11 +20,11 @@ https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3
 
 发行包 SHA-256：`40c6bc80aa32cd1d5c76ad1b05bccc67e5ec22cf779b6dc3617ee5432b88ee04`。构建器还校验两个原生文件各自的 SHA-256。组件只用于当前账号的请求签名，在禁止网络和持久写入的独立进程中运行；音频只读取服务器同次授权返回的资源和匹配授权信息。
 
-插件不附带封面图片，不下载后重新着色或按分类替换官方图片。歌曲、歌单、歌手和听歌模式直接向 MyGO 提供官方接口返回的 HTTPS 图片 URL，图片权利归原权利人。歌手主页参考官方 `GetArtistDetail`：公开 GET `/luna/pc/artists/{artist_id}`，不携带账号 Cookie、不调用签名辅助程序，读取 `artist_info` 与 `hot_tracks`；只展示资料和热门歌曲，不请求用户关系或改动账号关注。历史详情页使用最近历史列表第一首歌曲的官方封面 URL，不生成或附带图片；历史为空或第一首歌缺图时交给宿主默认显示，侧栏入口保持默认图标且不额外读取历史。成功播放后的最近历史追加接口参考官方客户端 `AppendRecentlyPlayedMedia` 调用，只提交当前歌曲的类型和 ID，不上传虚构收听时长或完成率；不复制官方 JavaScript 实现，协议依据见 `PLAYBACK-HISTORY.md`。
+插件不附带封面图片，不下载后重新着色或按分类替换官方图片。歌曲、歌单、歌手和听歌模式直接向 MyGO 提供官方接口返回的 HTTPS 图片 URL，图片权利归原权利人。歌手主页参考官方 `GetArtistDetail`：公开 GET `/luna/pc/artists/{artist_id}`，不携带账号 Cookie、不调用签名辅助程序，读取 `artist_info`，并通过公开 `/tracks`、`/albums` 列表读取完整分页单曲和专辑，不请求用户关系或改动账号关注。历史详情页使用最近历史列表第一首歌曲的官方封面 URL，不生成或附带图片；历史为空或第一首歌缺图时交给宿主默认显示，侧栏入口保持默认图标且不额外读取历史。成功播放后的最近历史追加接口参考官方客户端 `AppendRecentlyPlayedMedia` 调用，只提交当前歌曲的类型和 ID，不上传虚构收听时长或完成率；不复制官方 JavaScript 实现，协议依据见 `PLAYBACK-HISTORY.md`。
 
 `audio-convert` 由本项目 `helper/audio-convert.c` 编译，使用 macOS AudioToolbox 将已授权 AAC 转换为 MyGO 支持的 FLAC 容器，不将有损来源标记成无损音质。
 
-1.0.8 安装包使用本项目 Go 辅助程序与 C++ 签名器，不包含 Node 可执行文件或 JavaScript 引擎。签名器仅实现官方组件本次调用所需的 N-API 子集，不是通用 Node/N-API 运行环境。构建使用的四份官方 N-API 头文件及来源校验记录保存在 `native/signer/include`，其中 `NODE-LICENSE` 保留 Node 项目与相关贡献者的许可声明。Go 辅助程序仅使用标准库，Go 运行库许可保留为 `runtime/native/GO-LICENSE`。Windows 签名器静态链接的 C++ 标准库使用 Zig 0.15.2 工具链中的 LLVM libc++/libc++abi/展开支持；相关完整许可及固定校验记录保留在 `native/signer/licenses`，包括 Apache-2.0 with LLVM Exceptions 和历史许可声明。两个原生程序的来源与哈希记录在 `NATIVE-BUILD.json`，源码和构建配方随包提供。macOS 签名器使用本地 ad hoc 签名，不宣称 Apple 公证；官方 SDK 文件保持原样。
+自 1.0.8 起，安装包使用本项目 Go 辅助程序与 C++ 签名器，不包含 Node 可执行文件或 JavaScript 引擎。签名器仅实现官方组件本次调用所需的 N-API 子集，不是通用 Node/N-API 运行环境。构建使用的四份官方 N-API 头文件及来源校验记录保存在 `native/signer/include`，其中 `NODE-LICENSE` 保留 Node 项目与相关贡献者的许可声明。Go 辅助程序仅使用标准库，Go 运行库许可保留为 `runtime/native/GO-LICENSE`。Windows 签名器静态链接的 C++ 标准库使用 Zig 0.15.2 工具链中的 LLVM libc++/libc++abi/展开支持；相关完整许可及固定校验记录保留在 `native/signer/licenses`，包括 Apache-2.0 with LLVM Exceptions 和历史许可声明。两个原生程序的来源与哈希记录在 `NATIVE-BUILD.json`，源码和构建配方随包提供。macOS 签名器使用本地 ad hoc 签名，不宣称 Apple 公证；官方 SDK 文件保持原样。
 
 Windows x64 实验性安装包使用官方 3.7.0 更新包中的未修改 `bdms.node` 和 `metasecml.dll`，来源为 https://lf-luna-release.qishui.com/obj/luna-release/3.7.0/452316191/SodaMusic-v3.7.0-official-win32_x64.tgz ，归档 SHA-256 为 `30fe7762ccdb3c978cd51f8ca4696aed5e8cad876d7bfc20b25168d4cd2d40ac`。原生组件权利仍归原权利人，不属于本项目 AGPL 授权。Windows 组件分别校验哈希，调用约定经官方发行包的源码映射核对；不使用官方客户端的账号、Cookie、注册表账号存储或设备序列号。
 

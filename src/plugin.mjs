@@ -10,6 +10,8 @@ let active = null;
 const retainedAudio = [];
 const musicHelpers = new Set();
 const searchCursors = new Map();
+const newCatalogState = () => ({ search: new Map(), comments: new Map(), commentLocks: new Map() });
+let catalogState = newCatalogState();
 const feedStates = new Map();
 const discoveryPages = new Map();
 const FEED_FIRST_USE_KEY = "feed-first-use";
@@ -21,6 +23,11 @@ async function closeMusic() {
   catalogRequests.clear();
   retainedAudio.length = 0;
   searchCursors.clear();
+  catalogState.search.clear();
+  catalogState.comments.clear();
+  catalogState.commentLocks.clear();
+  // Old continuations retain only the discarded account's cache object.
+  catalogState = newCatalogState();
   feedStates.clear();
   discoveryPages.clear();
   const helpers = Array.from(musicHelpers);
@@ -567,6 +574,7 @@ async function music(method, params = {}, persistent = false) {
     // Normalize legacy cookies and their scope before transmitting credentials.
     const session = { ...saved, cookies: authStored(saved) };
     const catalog = new Catalog(session, {
+      state: catalogState,
       signal: controller.signal,
       uuid: () => authIdentity().portraitID.slice(0, -6),
       publicFetch: request,
@@ -588,6 +596,21 @@ async function music(method, params = {}, persistent = false) {
       case 'playlists': result = await catalog.playlists(); break;
       case 'playlist': result = await catalog.playlist(params.id); break;
       case 'artist': result = await catalog.artist(params.id); break;
+      case 'album': result = await catalog.album(params.id); break;
+      case 'suggest': result = await catalog.suggest(params.query); break;
+      case 'recent': result = await catalog.recent(); break;
+      case 'liked': result = await catalog.liked(params.offset); break;
+      case 'isLiked': result = await catalog.isLiked(params.ids); break;
+      case 'like': await catalog.like(params.id, params.on); break;
+      case 'savePlaylist': await catalog.savePlaylist(params.id, params.on); break;
+      case 'createPlaylist': result = await catalog.createPlaylist(params.name); break;
+      case 'renamePlaylist': await catalog.renamePlaylist(params.id, params.name); break;
+      case 'deletePlaylist': await catalog.deletePlaylist(params.id); break;
+      case 'addToPlaylist': await catalog.addToPlaylist(params.id, params.trackIds); break;
+      case 'removeFromPlaylist': await catalog.removeFromPlaylist(params.id, params.trackIds); break;
+      case 'comments': result = await catalog.comments(params); break;
+      case 'likeComment': await catalog.likeComment(params); break;
+      case 'postComment': result = await catalog.postComment(params); break;
       case 'played': await catalog.played(params.id); break;
       case 'search': return await catalog.search(params).then(reply => { current(); return reply; });
       case 'modes': result = await catalog.listeningModes(); break;
@@ -615,7 +638,10 @@ async function music(method, params = {}, persistent = false) {
     if (attempt !== generation) throw fail('signIn', t('账号已切换，请重试。'));
     if (error.code !== undefined) throw error;
     if (error.kind === 'unsupported') throw fail('unsupported', t('暂不支持此操作，目前可以搜索歌曲、浏览歌单和推荐。'));
-    if (error.kind === 'response' && method === 'artist') throw fail('', t('暂时无法读取歌手主页，请稍后重试。'));
+    if (error.kind === 'response' && method === 'artist') throw fail('', t('暂时无法读取完整歌手主页，请稍后重试。'));
+    if (error.kind === 'response' && method === 'album') throw fail('', t('暂时无法读取专辑内容，请稍后重试。'));
+    if (error.kind === 'network' && method === 'postComment') throw fail('', t('未能确认评论是否发送成功，请先查看评论列表再决定是否重发。'));
+    if (error.kind === 'response' && method === 'postComment') throw fail('', t('评论内容或返回结果异常。评论不能为空且最多 280 字；请先查看评论列表再决定是否重发。'));
     if (error.kind === 'response' && method === 'playlist') throw fail('', t(params.id === 'qishui:history' ? '暂时无法读取播放历史，请稍后重试。' : '暂时无法读取歌单内容，请稍后重试。'));
     throw authError(error.kind === 'canceled' ? 'network' : error.kind);
   } finally {
@@ -629,6 +655,21 @@ export async function home() { return (await music("home")).result; }
 export async function playlists() { return (await music("playlists")).result; }
 export async function playlist({ id }) { return (await music("playlist", { id })).result; }
 export async function artist({ id }) { return (await music("artist", { id })).result; }
+export async function album({ id }) { return (await music('album', { id })).result; }
+export async function suggest({ query }) { return (await music('suggest', { query })).result; }
+export async function recent() { return (await music('recent')).result; }
+export async function liked({ offset = 0 } = {}) { return (await music('liked', { offset })).result; }
+export async function isLiked({ ids }) { return (await music('isLiked', { ids })).result; }
+export async function like({ id, on }) { await music('like', { id, on }); }
+export async function savePlaylist({ id, on }) { await music('savePlaylist', { id, on }); }
+export async function createPlaylist({ name }) { return (await music('createPlaylist', { name })).result; }
+export async function renamePlaylist({ id, name }) { await music('renamePlaylist', { id, name }); }
+export async function deletePlaylist({ id }) { await music('deletePlaylist', { id }); }
+export async function addToPlaylist({ id, trackIds }) { await music('addToPlaylist', { id, trackIds }); }
+export async function removeFromPlaylist({ id, trackIds }) { await music('removeFromPlaylist', { id, trackIds }); }
+export async function comments({ trackId, offset = 0 }) { return (await music('comments', { trackId, offset })).result; }
+export async function likeComment({ trackId, commentId, on }) { await music('likeComment', { trackId, commentId, on }); }
+export async function postComment({ trackId, text }) { return (await music('postComment', { trackId, text })).result; }
 // MyGO calls this after starting audio, including cache hits. Resolving a
 // stream or prefetching it must never append a play to account history.
 export async function played({ id }) { await music("played", { id }); }

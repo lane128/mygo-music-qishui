@@ -7,6 +7,8 @@ export function historyPlaylist(firstTrack) {
   return {
     id: HISTORY_ID,
     name: '历史播放',
+    mine: true,
+    fixed: true,
     description: '汽水音乐账号的最近播放记录，最多展示 1000 首歌曲。',
     ...(firstTrack?.album?.imageUrl ? { imageUrl: firstTrack.album.imageUrl } : {}),
   }

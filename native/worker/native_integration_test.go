@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -48,6 +49,30 @@ func TestNativeSigner(t *testing.T) {
 		t.Fatal("isolated official signer failed")
 	}
 }
+
+// Every allowed catalogue route must traverse both native validators and the real isolated SDK.
+func TestNativeCatalogSigners(t *testing.T) {
+	root := nativeRoot(t)
+	var req request
+	_ = json.Unmarshal(signFrame(), &req)
+	base, err := parseSign(req.Params, req.Session.DeviceID)
+	if err != nil {
+		t.Fatal("sign fixture invalid")
+	}
+	for endpoint := range signPaths {
+		t.Run(endpoint, func(t *testing.T) {
+			spec := base
+			spec.URL = strings.Replace(base.URL, "/luna/pc/track_v2", endpoint, 1)
+			ctx, cancel := context.WithTimeout(context.Background(), 24*time.Second)
+			defer cancel()
+			signed, err := signRequest(ctx, root, spec)
+			if err != nil || len(signed) != 2 {
+				t.Fatal("isolated catalogue signing failed")
+			}
+		})
+	}
+}
+
 func TestNativeDecode(t *testing.T) {
 	root := nativeRoot(t)
 	for _, iv := range []int{8, 16} {

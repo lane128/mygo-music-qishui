@@ -267,14 +267,309 @@ function historyPlaylist(firstTrack) {
   return {
     id: HISTORY_ID,
     name: "历史播放",
+    mine: true,
+    fixed: true,
     description: "汽水音乐账号的最近播放记录，最多展示 1000 首歌曲。",
     ...firstTrack?.album?.imageUrl ? { imageUrl: firstTrack.album.imageUrl } : {}
   };
 }
 
+// helper/library-actions.mjs
+var OWN_PATH = "/luna/pc/me/playlist";
+var COLLECTION = "/luna/pc/me/collection";
+var PAGE_SIZE = 50;
+var MAX_PAGES = 500;
+var MAX_ITEMS = 25e3;
+var MAX_IDS = 1e3;
+var ordinaryTypes = /* @__PURE__ */ new Set([2, 3, 11]);
+var knownTypes = /* @__PURE__ */ new Set([1, 2, 3, 4, 11]);
+var validID = (value) => typeof value === "string" && /^\d{1,32}$/.test(value);
+var object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+function idOf(id) {
+  if (!validID(id)) throw error("response");
+  return id;
+}
+function idsOf(ids) {
+  if (!Array.isArray(ids) || !ids.length || ids.length > MAX_IDS) throw error("response");
+  return Array.from(new Set(Array.from(ids, idOf)));
+}
+function booleanOf(on) {
+  if (typeof on !== "boolean") throw error("response");
+  return on;
+}
+function nameOf(name) {
+  if (typeof name !== "string") throw error("response");
+  name = name.trim();
+  if (!name || name.length > 30 || /[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u.test(name)) throw error("response");
+  return name;
+}
+function accountOf(catalog) {
+  const id = catalog.session?.account?.id;
+  if (!validID(id)) throw error("session");
+  return id;
+}
+function playlistFlags(raw, accountId) {
+  if (!object(raw) || !validID(raw.id) || !validID(accountId) || !validID(raw.owner?.id)) return {};
+  if (raw.owner.id === accountId) {
+    if (!knownTypes.has(raw.type)) return {};
+    return { mine: true, ...ordinaryTypes.has(raw.type) ? {} : { fixed: true } };
+  }
+  return raw.state?.is_collected === true ? { saved: true } : {};
+}
+async function ownPlaylists(catalog) {
+  const accountId = accountOf(catalog);
+  const entries = /* @__PURE__ */ new Map();
+  const cursors = /* @__PURE__ */ new Set([""]);
+  let cursor = "", total = 0;
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const result = await catalog.request(OWN_PATH, { query: { cursor, count: String(PAGE_SIZE) }, signed: true });
+    if (!object(result) || !Array.isArray(result.playlists) || result.has_more !== void 0 && typeof result.has_more !== "boolean") throw error("response");
+    total += result.playlists.length;
+    if (total > MAX_ITEMS) throw error("response");
+    for (const raw of result.playlists) {
+      if (!object(raw) || !validID(raw.id)) throw error("response");
+      const old = entries.get(raw.id);
+      if (old && (old.type !== raw.type || old.owner?.id !== raw.owner?.id)) throw error("response");
+      entries.set(raw.id, raw);
+    }
+    if (result.has_more !== true) {
+      if (accountOf(catalog) !== accountId) throw error("session");
+      return [...entries.values()];
+    }
+    const next = typeof result.next_cursor === "number" && Number.isSafeInteger(result.next_cursor) ? String(result.next_cursor) : result.next_cursor;
+    if (typeof next !== "string" || !next || next === "0" || next.length > 8192 || /[\x00-\x1f\x7f]/.test(next) || cursors.has(next)) throw error("response");
+    cursor = next;
+    cursors.add(cursor);
+  }
+  throw error("response");
+}
+async function editablePlaylist(catalog, id, allowLiked = false) {
+  const raw = (await ownPlaylists(catalog)).find((raw2) => raw2.id === id);
+  if (!raw || raw.owner?.id !== accountOf(catalog) || !(ordinaryTypes.has(raw.type) || allowLiked && raw.type === 1)) throw error("unsupported");
+  return raw;
+}
+async function write(catalog, path, body) {
+  await catalog.request(path, { body, signed: true });
+}
+var mediaOf = (ids) => ids.map((id) => ({ id, type: "track" }));
+async function collectMedia(catalog, ids, on) {
+  const media = mediaOf(ids);
+  await write(catalog, `${COLLECTION}/media${on ? "" : "/delete"}`, on ? { scene: "", media } : { media });
+}
+async function like(catalog, id, on) {
+  idOf(id);
+  booleanOf(on);
+  await collectMedia(catalog, [id], on);
+}
+async function savePlaylist(catalog, id, on) {
+  idOf(id);
+  booleanOf(on);
+  await write(catalog, `${COLLECTION}/playlist${on ? "" : "/delete"}`, { playlist_ids: [id] });
+}
+async function createPlaylist(catalog, name) {
+  name = nameOf(name);
+  const result = await catalog.request(OWN_PATH, { body: { name, is_private: false, media: [] }, signed: true });
+  return idOf(result?.playlist?.id);
+}
+async function renamePlaylist(catalog, id, name) {
+  idOf(id);
+  name = nameOf(name);
+  await editablePlaylist(catalog, id);
+  await write(catalog, `${OWN_PATH}/update`, { playlist_id: id, name });
+}
+async function deletePlaylist(catalog, id) {
+  idOf(id);
+  await editablePlaylist(catalog, id);
+  await write(catalog, `${OWN_PATH}/delete`, { playlist_ids: [id] });
+}
+async function changePlaylist(catalog, id, trackIds, on) {
+  idOf(id);
+  const ids = idsOf(trackIds);
+  const raw = await editablePlaylist(catalog, id, true);
+  if (raw.type === 1) return collectMedia(catalog, ids, on);
+  await write(catalog, `${OWN_PATH}/media/${on ? "append" : "delete"}`, { playlist_id: id, media: mediaOf(ids) });
+}
+async function addToPlaylist(catalog, id, trackIds) {
+  await changePlaylist(catalog, id, trackIds, true);
+}
+async function removeFromPlaylist(catalog, id, trackIds) {
+  await changePlaylist(catalog, id, trackIds, false);
+}
+async function likedTracks(catalog) {
+  const lists = (await ownPlaylists(catalog)).filter((raw) => raw.type === 1 && raw.owner?.id === accountOf(catalog));
+  if (lists.length !== 1) throw error("response");
+  const playlist2 = await catalog.playlist(lists[0].id);
+  if (playlist2?.id !== lists[0].id || !Array.isArray(playlist2.tracks) || playlist2.tracks.length > MAX_ITEMS) throw error("response");
+  const tracks = /* @__PURE__ */ new Map();
+  for (const track of playlist2.tracks) {
+    if (!object(track) || !validID(track.id)) throw error("response");
+    tracks.set(track.id, track);
+  }
+  return [...tracks.values()];
+}
+async function liked(catalog, offset = 0) {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > MAX_ITEMS) throw error("response");
+  const tracks = await likedTracks(catalog);
+  return { tracks: tracks.slice(offset, offset + PAGE_SIZE), more: offset + PAGE_SIZE < tracks.length };
+}
+async function isLiked(catalog, ids) {
+  ids = idsOf(ids);
+  const likedIDs = new Set((await likedTracks(catalog)).map((track) => track.id));
+  return Object.fromEntries(ids.map((id) => [id, likedIDs.has(id)]));
+}
+
+// helper/avatar.mjs
+function avatarURL(value, size = 100) {
+  if (typeof value === "string") {
+    try {
+      return new URL(value).protocol === "https:" ? value : void 0;
+    } catch {
+      return void 0;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Array.isArray(value.urls)) return void 0;
+  for (const raw of value.urls) {
+    if (typeof raw !== "string") continue;
+    try {
+      const url = new URL(raw);
+      if (url.protocol !== "https:") continue;
+      const uri = typeof value.uri === "string" ? value.uri : "";
+      if (value.need_complete_url === true || !uri || url.pathname.includes(uri)) return raw;
+      url.pathname = url.pathname.replace(/\/$/, "") + "/" + uri.replace(/^\//, "");
+      const template = typeof value.template_prefix === "string" && value.template_prefix ? `${value.template_prefix}-crop-center:${size}:${size}.jpg` : `c5_${size}x${size}.jpg`;
+      if (!url.pathname.includes("~")) url.pathname += "~" + template;
+      return url.href;
+    } catch {
+    }
+  }
+}
+
+// helper/comments.mjs
+var PAGE_SIZE2 = 20;
+var MAX_TRACKS = 8;
+var MAX_PAGES2 = 128;
+var MAX_CURSOR = 8192;
+var KINDS = /* @__PURE__ */ new Set(["response", "network", "session", "expired", "verify", "rateLimit", "rejected", "signature", "canceled", "unsupported"]);
+function idOf2(value, wire = false) {
+  if (wire && Number.isSafeInteger(value) && value >= 0) value = String(value);
+  if (typeof value !== "string" || !/^\d{1,32}$/.test(value)) throw error("response");
+  return value;
+}
+function integer(value) {
+  if (typeof value === "string" && /^\d{1,16}$/.test(value)) value = Number(value);
+  if (!Number.isSafeInteger(value) || value < 0) throw error("response");
+  return value;
+}
+async function send(request, path, options) {
+  if (typeof request !== "function") throw error("response");
+  try {
+    return await request(path, options);
+  } catch (cause) {
+    throw error(KINDS.has(cause?.kind) ? cause.kind : "network");
+  }
+}
+function commentOf(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || typeof raw.content !== "string") throw error("response");
+  const artist2 = raw.user_artist_info?.artist_brief;
+  const isArtist = typeof artist2?.name === "string" && !!artist2.name.trim();
+  const author = isArtist ? artist2.name : typeof raw.user?.nickname === "string" && raw.user.nickname.trim() ? raw.user.nickname : "汽水音乐用户";
+  const avatarUrl = isArtist ? avatarURL(artist2.url_avatar) || avatarURL(artist2.thumb_avatar_url) : avatarURL(raw.user?.url_avatar) || avatarURL(raw.user?.thumb_avatar_url);
+  const result = { id: idOf2(raw.id, true), author, ...avatarUrl ? { avatarUrl } : {}, text: raw.content };
+  if (raw.count_digged != null) result.likes = integer(raw.count_digged);
+  if (raw.time_created != null) {
+    const seconds = integer(raw.time_created);
+    if (!Number.isSafeInteger(seconds * 1e3)) throw error("response");
+    result.time = seconds * 1e3;
+  }
+  if (raw.user_digged != null) {
+    if (typeof raw.user_digged !== "boolean") throw error("response");
+    result.liked = raw.user_digged;
+  }
+  return result;
+}
+function cursorOf(value) {
+  if (Number.isSafeInteger(value) && value >= 0) value = String(value);
+  if (typeof value !== "string" || value.length > MAX_CURSOR || /[\x00-\x1f\x7f]/.test(value)) throw error("response");
+  return value;
+}
+function emptyState() {
+  return { comments: [], ids: /* @__PURE__ */ new Set(), cursor: "", cursors: /* @__PURE__ */ new Set([""]), pages: 0, more: true, total: 0 };
+}
+function copyState(value) {
+  return { ...value, comments: [...value.comments], ids: new Set(value.ids), cursors: new Set(value.cursors) };
+}
+async function readComments(request, { trackId, offset = 0, state = /* @__PURE__ */ new Map() }) {
+  idOf2(trackId);
+  if (!Number.isSafeInteger(offset) || offset < 0 || !(state instanceof Map)) throw error("response");
+  const cached = state.get(trackId);
+  const next = offset === 0 || !cached ? emptyState() : copyState(cached);
+  while (next.comments.length <= offset && next.more) {
+    if (next.pages >= MAX_PAGES2) throw error("response");
+    const result = await send(request, "/luna/pc/comments", {
+      signed: true,
+      query: { group_id: trackId, group_type: 0, cursor: next.cursor, count: PAGE_SIZE2, image_strategy: 2 }
+    });
+    if (!result || typeof result !== "object" || Array.isArray(result)) throw error("response");
+    const rows = result.comments ?? [];
+    if (!Array.isArray(rows) || rows.length > PAGE_SIZE2 || result.has_more != null && typeof result.has_more !== "boolean") throw error("response");
+    const comments3 = rows.map(commentOf);
+    const more = result.has_more ?? false;
+    const cursor = cursorOf(result.cursor ?? "");
+    if (more && (!cursor || next.cursors.has(cursor))) throw error("response");
+    const total = result.count == null ? next.total : integer(result.count);
+    for (const comment of comments3) {
+      if (next.ids.has(comment.id)) continue;
+      next.ids.add(comment.id);
+      next.comments.push(comment);
+    }
+    next.pages++;
+    next.total = Math.max(total, next.comments.length);
+    next.more = more;
+    next.cursor = cursor;
+    next.cursors.add(cursor);
+  }
+  const comments2 = next.comments.slice(offset, offset + PAGE_SIZE2).map((comment) => ({ ...comment }));
+  state.delete(trackId);
+  state.set(trackId, next);
+  while (state.size > MAX_TRACKS) state.delete(state.keys().next().value);
+  return { comments: comments2, total: next.total, more: offset + comments2.length < next.comments.length || next.more };
+}
+async function likeComment(request, { trackId, commentId, on }) {
+  idOf2(trackId);
+  idOf2(commentId);
+  if (typeof on !== "boolean") throw error("response");
+  await send(request, "/luna/pc/comments/action", {
+    signed: true,
+    body: { comment_id: commentId, reply_id: "", group_id: trackId, type: on ? 1 : 3, scene_name: "comment_detail" }
+  });
+}
+function commentText(value) {
+  if (typeof value !== "string") throw error("response");
+  const text = value.trim().replace(/\n+/g, "\n");
+  if (!text || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text)) throw error("response");
+  const segments = typeof Intl !== "undefined" && typeof Intl.Segmenter === "function" ? new Intl.Segmenter(void 0, { granularity: "grapheme" }).segment(text) : text;
+  let count = 0;
+  for (const _ of segments) if (++count > 280) throw error("response");
+  return text;
+}
+async function postComment(request, { trackId, text, account: account2 }) {
+  idOf2(trackId);
+  text = commentText(text);
+  if (!account2 || typeof account2 !== "object" || Array.isArray(account2) || typeof account2.name !== "string" || !account2.name.trim() || account2.name.length > 512 || account2.imageUrl != null && (typeof account2.imageUrl !== "string" || !avatarURL(account2.imageUrl))) throw error("session");
+  const author = account2.name;
+  const avatarUrl = account2.imageUrl;
+  const result = await send(request, "/luna/pc/comments/create", {
+    signed: true,
+    body: { group_id: trackId, group_type: 0, comment_type: 0, text, hashtags: [], reply_id: "", reply_to_reply_id: "", reply_to_user_id: "", text_extra: [] }
+  });
+  const id = idOf2(result?.created_comment, true);
+  if (/^0+$/.test(id)) throw error("response");
+  return { id, author, ...avatarUrl ? { avatarUrl } : {}, text };
+}
+
 // helper/catalog-core.mjs
-var PAGE_SIZE = 20;
-var idOf = (value) => {
+var PAGE_SIZE3 = 20;
+var idOf3 = (value) => {
   if (typeof value !== "string" && !(typeof value === "number" && Number.isSafeInteger(value))) throw error("response");
   const id = String(value);
   if (!id.trim() || id.length > 512 || /[\x00-\x1f\x7f]/.test(id)) throw error("response");
@@ -310,12 +605,27 @@ function pcCatalogParams(session) {
     fp: session.deviceID
   });
 }
-var isArtistPath = (path) => typeof path === "string" && /^\/luna\/pc\/artists\/\d{1,32}$/.test(path);
-var paths = /* @__PURE__ */ new Set([HISTORY_PATH, "/luna/pc/me/playlist", "/luna/pc/playlist/detail", "/luna/search/track", "/luna/pc/track_v2", "/luna/pc/feed/mode", "/luna/pc/feed/song-tab", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks"]);
+var isPublicCatalogPath = (path) => typeof path === "string" && (/^\/luna\/pc\/artists\/\d{1,32}(?:\/(?:tracks|albums))?$/.test(path) || /^\/luna\/pc\/albums\/\d{1,32}$/.test(path) || /^\/luna\/pc\/(?:search\/(?:artist|album|playlist)|sug)$/.test(path));
+var libraryWritePaths = [
+  "/luna/pc/comments/action",
+  "/luna/pc/comments/create",
+  "/luna/pc/me/collection/media",
+  "/luna/pc/me/collection/media/delete",
+  "/luna/pc/me/collection/playlist",
+  "/luna/pc/me/collection/playlist/delete",
+  "/luna/pc/me/playlist/update",
+  "/luna/pc/me/playlist/delete",
+  "/luna/pc/me/playlist/media/append",
+  "/luna/pc/me/playlist/media/delete"
+];
+var paths = /* @__PURE__ */ new Set([HISTORY_PATH, "/luna/pc/me/playlist", "/luna/pc/playlist/detail", "/luna/search/track", "/luna/pc/track_v2", "/luna/pc/feed/mode", "/luna/pc/feed/song-tab", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/comments", ...libraryWritePaths]);
 async function requestJSON(session, path, { query = {}, body, signed = false, signal } = {}, deps = {}) {
-  const artist2 = isArtistPath(path);
+  const artist2 = isPublicCatalogPath(path);
   if (!paths.has(path) && !artist2) throw error("response");
   if (artist2 && (body !== void 0 || signed)) throw error("response");
+  if (libraryWritePaths.includes(path) && (body === void 0 || !signed)) throw error("response");
+  if (path === "/luna/pc/me/playlist" && body !== void 0 && !signed) throw error("response");
+  if (path === "/luna/pc/comments" && (body !== void 0 || !signed)) throw error("response");
   const cookies = validateSession(session);
   const params = signed || artist2 ? pcCatalogParams(session) : new URLSearchParams();
   for (const [name, value] of new URLSearchParams(query)) params.set(name, value);
@@ -415,11 +725,11 @@ function image(raw, suffix = "~c5_375x375.jpg") {
 function trackOf(raw) {
   if (!raw || raw.name != null && typeof raw.name !== "string" || !Number.isFinite(raw.duration ?? 0) || (raw.duration ?? 0) < 0) throw error("response");
   return {
-    id: idOf(raw.id),
+    id: idOf3(raw.id),
     name: raw.name || "",
     duration: raw.duration ?? 0,
-    artists: (raw.artists || []).map((a) => ({ id: a.id == null || a.id === "" ? "" : idOf(a.id), name: a.name || "" })),
-    album: { id: raw.album?.id == null ? "" : idOf(raw.album.id), name: raw.album?.name || "", imageUrl: image(raw.album?.cover_url || raw.album?.url_cover) }
+    artists: (raw.artists || []).map((a) => ({ id: a.id == null || a.id === "" ? "" : idOf3(a.id), name: a.name || "" })),
+    album: { id: raw.album?.id == null ? "" : idOf3(raw.album.id), name: raw.album?.name || "", imageUrl: image(raw.album?.cover_url || raw.album?.url_cover) }
   };
 }
 function playlistCount(raw, strict = true) {
@@ -441,15 +751,16 @@ function paginationOf(result, cursor) {
   if (more && (!next || next === cursor)) throw error("response");
   return { cursor: next, more };
 }
-function playlistOf(raw) {
+function playlistOf(raw, accountId) {
   if (!raw || typeof (raw.title || raw.public_title) !== "string") throw error("response");
   const count = playlistCount(raw, false);
   return {
-    id: idOf(raw.id),
+    id: idOf3(raw.id),
     name: raw.title || raw.public_title,
     ...count == null ? {} : { trackCount: count },
     imageUrl: image(raw.cover_url || raw.url_cover, "~c5_300x300.jpg"),
-    description: raw.desc || ""
+    description: raw.desc || "",
+    ...playlistFlags(raw, accountId)
   };
 }
 function tracksOf(resources) {
@@ -463,22 +774,143 @@ function tracksOf(resources) {
   }
   return tracks;
 }
+var catalogID = (value) => {
+  if (typeof value !== "string" || !/^\d{1,32}$/.test(value)) throw error("response");
+  return value;
+};
+function artistOf(raw) {
+  if (!raw || typeof raw.name !== "string" || !raw.name.trim()) throw error("response");
+  return { id: catalogID(idOf3(raw.id)), name: raw.name, imageUrl: avatarURL(raw.url_avatar, 600) };
+}
+function albumOf(raw) {
+  if (!raw || typeof raw.name !== "string" || !raw.name.trim()) throw error("response");
+  const album2 = { id: catalogID(idOf3(raw.id)), name: raw.name, imageUrl: image(raw.url_cover), artists: (raw.artists ?? []).map(artistOf) };
+  if (raw.release_date != null) {
+    const seconds = Number(raw.release_date);
+    if (!Number.isSafeInteger(seconds) || seconds < 0 || seconds > 253402300799) throw error("response");
+    if (seconds) album2.released = new Date(seconds * 1e3).toISOString().slice(0, 10);
+  }
+  return album2;
+}
+function pcPage(result, cursor, cursorField = "next_cursor") {
+  if (!result || typeof result !== "object" || Array.isArray(result) || result.has_more != null && typeof result.has_more !== "boolean") throw error("response");
+  const raw = result[cursorField];
+  const next = raw == null ? "" : typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0 ? String(raw) : raw;
+  if (typeof next !== "string" || next.length > 8192 || /[\x00-\x1f\x7f]/.test(next)) throw error("response");
+  const more = result.has_more === true;
+  if (more && (!next || next === cursor)) throw error("response");
+  return { cursor: next, more };
+}
 var Catalog = class {
-  constructor(session, { request = requestJSON, signal, publicFetch, uuid } = {}) {
+  constructor(session, { request = requestJSON, signal, publicFetch, uuid, state = {} } = {}) {
     validateSession(session);
     this.session = session;
     this.request = (path, opts) => request(session, path, { ...opts, signal });
     this.signal = signal;
     this.publicFetch = publicFetch;
     this.uuid = uuid;
+    this.state = state;
+    this.state.search ??= /* @__PURE__ */ new Map();
+    this.state.comments ??= /* @__PURE__ */ new Map();
+    this.state.commentLocks ??= /* @__PURE__ */ new Map();
+  }
+  async libraryPlaylists() {
+    const entries = /* @__PURE__ */ new Map(), cursors = /* @__PURE__ */ new Set([""]);
+    let cursor = "";
+    for (let count = 0; count < 500; count++) {
+      const result = await this.request("/luna/pc/me/playlist", { query: { aid: "386088", version_code: "30020100", cursor, count: "50" } });
+      if (!Array.isArray(result.playlists)) throw error("response");
+      for (const raw of result.playlists) {
+        const id = idOf3(raw?.id);
+        if (!entries.has(id)) entries.set(id, raw);
+      }
+      if (entries.size > 25e3) throw error("response");
+      const next = pcPage(result, cursor);
+      if (!next.more) return [...entries.values()];
+      if (cursors.has(next.cursor)) throw error("response");
+      cursor = next.cursor;
+      cursors.add(cursor);
+    }
+    throw error("response");
   }
   async playlists() {
-    const result = await this.request("/luna/pc/me/playlist", { query: { aid: "386088", version_code: "30020100" } });
-    if (!Array.isArray(result.playlists)) throw error("response");
-    return [...result.playlists.map(playlistOf), historyPlaylist()];
+    return [...(await this.libraryPlaylists()).map((raw) => playlistOf(raw, this.session.account?.id)), historyPlaylist()];
+  }
+  like(id, on) {
+    return like(this, id, on);
+  }
+  liked(offset) {
+    return liked(this, offset);
+  }
+  isLiked(ids) {
+    return ids?.length === 0 ? {} : isLiked(this, ids);
+  }
+  savePlaylist(id, on) {
+    return savePlaylist(this, id, on);
+  }
+  async createPlaylist(name) {
+    const id = await createPlaylist(this, name);
+    return { id, name: name.trim(), mine: true };
+  }
+  renamePlaylist(id, name) {
+    return renamePlaylist(this, id, name);
+  }
+  deletePlaylist(id) {
+    return deletePlaylist(this, id);
+  }
+  addToPlaylist(id, trackIds) {
+    return addToPlaylist(this, id, trackIds);
+  }
+  removeFromPlaylist(id, trackIds) {
+    return removeFromPlaylist(this, id, trackIds);
+  }
+  recent() {
+    return this.history().then((page) => page.tracks);
+  }
+  async commentOperation(trackId, operation) {
+    catalogID(trackId);
+    const locks = this.state.commentLocks;
+    if (!locks.has(trackId) && locks.size >= 16) throw error("rateLimit");
+    const prior = locks.get(trackId) ?? Promise.resolve();
+    const pending = prior.catch(() => {
+    }).then(() => {
+      if (this.signal?.aborted) throw error("canceled");
+      return operation();
+    });
+    locks.set(trackId, pending);
+    try {
+      return await pending;
+    } finally {
+      if (locks.get(trackId) === pending) locks.delete(trackId);
+    }
+  }
+  comments(params) {
+    return this.commentOperation(params.trackId, () => readComments(this.request, { ...params, state: this.state.comments }));
+  }
+  likeComment(params) {
+    return this.commentOperation(params.trackId, async () => {
+      await likeComment(this.request, params);
+      const cached = this.state.comments.get(params.trackId)?.comments.find((comment) => comment.id === params.commentId);
+      if (cached) {
+        if (cached.liked !== params.on && cached.likes != null) cached.likes = Math.max(0, cached.likes + (params.on ? 1 : -1));
+        cached.liked = params.on;
+      }
+    });
+  }
+  postComment(params) {
+    return this.commentOperation(params.trackId, async () => {
+      const comment = await postComment(this.request, { ...params, account: this.session.account });
+      const cached = this.state.comments.get(params.trackId);
+      if (cached && !cached.ids.has(comment.id)) {
+        cached.comments.unshift(comment);
+        cached.ids.add(comment.id);
+        cached.total++;
+      }
+      return comment;
+    });
   }
   async playlistPage(id, cursor = "") {
-    idOf(id);
+    idOf3(id);
     const query = pcCatalogParams(this.session);
     query.set("playlist_id", id);
     query.set("cursor", cursor);
@@ -488,16 +920,15 @@ var Catalog = class {
     const page = paginationOf(result, cursor);
     let raw = result.playlist;
     if (raw != null && (typeof raw !== "object" || Array.isArray(raw))) throw error("response");
-    if (raw?.id != null && idOf(raw.id) !== id) throw error("response");
+    if (raw?.id != null && idOf3(raw.id) !== id) throw error("response");
     if (raw?.id == null || typeof (raw.title || raw.public_title) !== "string") {
-      const library = await this.request("/luna/pc/me/playlist", { query: { aid: "386088", version_code: "30020100" } });
-      if (!Array.isArray(library.playlists)) throw error("response");
-      const known = library.playlists.find((item) => item?.id != null && idOf(item.id) === id);
+      const library = await this.libraryPlaylists();
+      const known = library.find((item) => item?.id != null && idOf3(item.id) === id);
       if (!known) throw error("response");
       const detailCounts = raw && (raw.count_tracks != null || raw.resource_cnt?.track_cnt != null) ? { count_tracks: raw.count_tracks, resource_cnt: raw.resource_cnt } : {};
       raw = { ...known, ...raw, ...detailCounts, id, title: raw?.title || raw?.public_title || known.title || known.public_title };
     }
-    const playlist2 = playlistOf(raw);
+    const playlist2 = playlistOf(raw, this.session.account?.id);
     const count = playlistCount(raw);
     if (!Array.isArray(result.media_resources)) {
       const terminal = !page.more && (!page.cursor || page.cursor === "0" || page.cursor === cursor || result.has_more === false);
@@ -527,19 +958,123 @@ var Catalog = class {
     }
     throw error("response");
   }
+  async artistList(id, kind) {
+    const entries = /* @__PURE__ */ new Map(), cursors = /* @__PURE__ */ new Set([""]);
+    let cursor = "";
+    for (let page = 0; page < 200; page++) {
+      if (this.signal?.aborted) throw error("canceled");
+      const result = await this.request(`/luna/pc/artists/${id}/${kind}`, { query: { cursor, count: "50", ...kind === "tracks" ? { sort_type: "0" } : {} } });
+      const next = pcPage(result, cursor);
+      if (result[kind] == null && (next.more || !result.status_info || typeof result.status_info !== "object" || Array.isArray(result.status_info))) throw error("response");
+      const rows = result[kind] ?? [];
+      if (!Array.isArray(rows) || rows.length > 1e3) throw error("response");
+      for (const raw of rows) {
+        const entry = kind === "tracks" ? trackOf(raw) : albumOf(raw);
+        if (!entries.has(entry.id)) entries.set(entry.id, entry);
+      }
+      if (entries.size > 1e4) throw error("response");
+      if (!next.more) return [...entries.values()];
+      if (cursors.has(next.cursor)) throw error("response");
+      cursor = next.cursor;
+      cursors.add(cursor);
+    }
+    throw error("response");
+  }
   async artist(id) {
-    if (typeof id !== "string" || !/^\d{1,32}$/.test(id)) throw error("response");
+    catalogID(id);
     const result = await this.request(`/luna/pc/artists/${id}`, { query: { locate_item_id: "" } });
-    const raw = result.artist_info;
-    if (!raw || idOf(raw.id) !== id || typeof raw.name !== "string" || !raw.name.trim()) throw error("response");
-    const hot = result.hot_tracks ?? [];
-    if (!Array.isArray(hot)) throw error("response");
+    const artist2 = artistOf(result.artist_info);
+    if (artist2.id !== id) throw error("response");
+    const [tracks, albums] = await Promise.all([this.artistList(id, "tracks"), this.artistList(id, "albums")]);
+    return { artist: artist2, tracks, albums };
+  }
+  async album(id) {
+    catalogID(id);
+    const result = await this.request(`/luna/pc/albums/${id}`, { query: { ignore_tracks: "false" } });
+    const album2 = albumOf(result.album_info);
+    if (album2.id !== id || result.tracks != null && !Array.isArray(result.tracks)) throw error("response");
     const tracks = /* @__PURE__ */ new Map();
-    for (const item of hot) {
-      const track = trackOf(item);
+    for (const raw of result.tracks ?? []) {
+      const track = trackOf(raw);
       if (!tracks.has(track.id)) tracks.set(track.id, track);
     }
-    return { artist: { id, name: raw.name, imageUrl: image(raw.url_avatar) }, tracks: [...tracks.values()] };
+    return { album: album2, tracks: [...tracks.values()] };
+  }
+  async suggest(query) {
+    if (typeof query !== "string" || query.length > 512) throw error("response");
+    if (!query.trim()) return [];
+    const result = await this.request("/luna/pc/sug", { query: { q: query, sug_scene: "main", sug_search_id: this.uuid() } });
+    if (result.sugs != null && !Array.isArray(result.sugs)) throw error("response");
+    const suggestions = /* @__PURE__ */ new Set();
+    for (const item of result.sugs ?? []) {
+      if (typeof item?.suggestion !== "string") throw error("response");
+      if (item.suggestion.trim()) suggestions.add(item.suggestion);
+      if (suggestions.size === 20) break;
+    }
+    return [...suggestions];
+  }
+  async entitySearch({ query, kind, offset }) {
+    const types = { artists: ["artist", artistOf], albums: ["album", albumOf], playlists: ["playlist", playlistOf] };
+    if (!Object.hasOwn(types, kind)) throw error("unsupported");
+    const [type, map] = types[kind];
+    const key = JSON.stringify([query, kind]);
+    let state = this.state.search.get(key);
+    if (!state || offset === 0) {
+      state = { id: this.uuid(), cursor: "0", cursors: /* @__PURE__ */ new Set(["0"]), items: [], ids: /* @__PURE__ */ new Set(), more: true, pages: 0, pending: null };
+      while (this.state.search.size >= 16) this.state.search.delete(this.state.search.keys().next().value);
+      this.state.search.set(key, state);
+    }
+    while (state.items.length <= offset && state.more) {
+      if (this.signal?.aborted) throw error("canceled");
+      if (!state.pending) state.pending = (async () => {
+        if (++state.pages > 500) throw error("response");
+        const result = await this.request(`/luna/pc/search/${type}`, { query: {
+          q: query,
+          cursor: state.cursor,
+          search_id: state.id,
+          search_method: "input",
+          debug_params: "",
+          from_search_id: "",
+          search_scene: ""
+        } });
+        if (!Array.isArray(result.result_groups)) throw error("response");
+        const groups = result.result_groups.filter((group2) => group2?.id === kind);
+        if (groups.length > 1) throw error("response");
+        const group = groups[0];
+        if (!group) {
+          if (result.result_groups.length) throw error("response");
+          state.more = false;
+          return;
+        }
+        const next = pcPage(group, state.cursor);
+        if (group.data != null && !Array.isArray(group.data)) throw error("response");
+        const additions = [];
+        for (const item of group.data ?? []) {
+          const raw = item?.entity?.[type];
+          if (raw == null) continue;
+          const entry = map(raw);
+          if (!state.ids.has(entry.id)) {
+            state.ids.add(entry.id);
+            additions.push(entry);
+          }
+        }
+        if (state.ids.size > 1e4 || next.more && state.cursors.has(next.cursor)) throw error("response");
+        state.items.push(...additions);
+        state.more = next.more;
+        state.cursor = next.cursor;
+        state.cursors.add(next.cursor);
+      })().finally(() => {
+        state.pending = null;
+      });
+      try {
+        await state.pending;
+      } catch (failure) {
+        if (this.state.search.get(key) === state) this.state.search.delete(key);
+        throw failure;
+      }
+    }
+    const entries = state.items.slice(offset, offset + PAGE_SIZE3);
+    return { result: { [kind]: entries, more: offset + entries.length < state.items.length || state.more } };
   }
   async played(id) {
     if (typeof id !== "string" || !/^\d{1,32}$/.test(id)) throw error("response");
@@ -574,7 +1109,7 @@ var Catalog = class {
     const params = androidSearchParams(this.session, this.uuid());
     params.set("q", query);
     params.set("cursor", cursor);
-    params.set("count", String(PAGE_SIZE));
+    params.set("count", String(PAGE_SIZE3));
     const result = await this.request("/luna/search/track", { query: params });
     if (!Array.isArray(result.result_groups)) throw error("response");
     const tracks = /* @__PURE__ */ new Map();
@@ -597,17 +1132,17 @@ var Catalog = class {
         more = group.has_more;
       }
     }
-    more ??= !!next || rawCount >= PAGE_SIZE;
+    more ??= !!next || rawCount >= PAGE_SIZE3;
     if (more && next == null) {
-      if (!/^\d+$/.test(cursor) || !rawCount || !Number.isSafeInteger(Number(cursor) + Math.max(PAGE_SIZE, rawCount))) throw error("response");
-      next = String(Number(cursor) + Math.max(PAGE_SIZE, rawCount));
+      if (!/^\d+$/.test(cursor) || !rawCount || !Number.isSafeInteger(Number(cursor) + Math.max(PAGE_SIZE3, rawCount))) throw error("response");
+      next = String(Number(cursor) + Math.max(PAGE_SIZE3, rawCount));
     }
     if (more && (!next || next === cursor)) throw error("response");
     return { tracks: [...tracks.values()], more, cursor: next };
   }
   async search({ query, kind = "tracks", offset = 0, cursor }) {
-    if (kind !== "tracks") throw error("unsupported");
-    if (typeof query !== "string" || !query.trim() || query.length > 512 || !Number.isSafeInteger(offset) || offset < 0) throw error("response");
+    if (typeof query !== "string" || !query.trim() || query.length > 512 || !Number.isSafeInteger(offset) || offset < 0 || offset > 1e4) throw error("response");
+    if (kind !== "tracks") return this.entitySearch({ query, kind, offset });
     if (cursor != null && (typeof cursor !== "string" || cursor.length > 8192)) throw error("response");
     let skipped = 0;
     let current = cursor ?? "0";
@@ -648,7 +1183,7 @@ var Catalog = class {
   }
   async radioBatch({ id, cursor = "" } = {}) {
     if (typeof id !== "string" || !id.startsWith("radio:")) throw error("unsupported");
-    const radioID = idOf(id.slice(6));
+    const radioID = idOf3(id.slice(6));
     if (typeof cursor !== "string" || cursor.length > 8192) throw error("response");
     const result = await this.request("/luna/pc/feed/radio/tracks", { signed: true, body: { radio_id: radioID, count: 6, cursor } });
     if (result.has_more != null && typeof result.has_more !== "boolean") throw error("response");
@@ -656,14 +1191,14 @@ var Catalog = class {
     return { result: feedTracks(result), ...result.next_cursor == null ? {} : { cursor: result.next_cursor }, more: result.has_more ?? result.items.length > 0 };
   }
   async lyrics(id) {
-    idOf(id);
+    idOf3(id);
     const query = new URLSearchParams({ track_id: id, device_platform: "web" });
     const result = await fetchJSON("https://beta-luna.douyin.com/luna/h5/seo_track?" + query, {
       headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36" },
       signal: this.signal
     }, this.publicFetch);
     const track = result.seo_track?.track || result.track || result.track_info;
-    if (track?.id != null && idOf(track.id) !== id) throw error("response");
+    if (track?.id != null && idOf3(track.id) !== id) throw error("response");
     const lyric = result.lyric ?? result.seo_track?.lyric;
     if (lyric != null) {
       if (typeof lyric !== "object" || Array.isArray(lyric) || lyric.content != null && typeof lyric.content !== "string") throw error("response");
@@ -767,6 +1302,8 @@ var active = null;
 var retainedAudio = [];
 var musicHelpers = /* @__PURE__ */ new Set();
 var searchCursors = /* @__PURE__ */ new Map();
+var newCatalogState = () => ({ search: /* @__PURE__ */ new Map(), comments: /* @__PURE__ */ new Map(), commentLocks: /* @__PURE__ */ new Map() });
+var catalogState = newCatalogState();
 var feedStates = /* @__PURE__ */ new Map();
 var discoveryPages = /* @__PURE__ */ new Map();
 var FEED_FIRST_USE_KEY = "feed-first-use";
@@ -777,6 +1314,10 @@ async function closeMusic() {
   catalogRequests.clear();
   retainedAudio.length = 0;
   searchCursors.clear();
+  catalogState.search.clear();
+  catalogState.comments.clear();
+  catalogState.commentLocks.clear();
+  catalogState = newCatalogState();
   feedStates.clear();
   discoveryPages.clear();
   const helpers = Array.from(musicHelpers);
@@ -1371,6 +1912,7 @@ async function music(method, params = {}, persistent = false) {
   try {
     const session = { ...saved, cookies: authStored(saved) };
     const catalog = new Catalog(session, {
+      state: catalogState,
       signal: controller.signal,
       uuid: () => authIdentity().portraitID.slice(0, -6),
       publicFetch: request,
@@ -1399,6 +1941,51 @@ async function music(method, params = {}, persistent = false) {
         break;
       case "artist":
         result = await catalog.artist(params.id);
+        break;
+      case "album":
+        result = await catalog.album(params.id);
+        break;
+      case "suggest":
+        result = await catalog.suggest(params.query);
+        break;
+      case "recent":
+        result = await catalog.recent();
+        break;
+      case "liked":
+        result = await catalog.liked(params.offset);
+        break;
+      case "isLiked":
+        result = await catalog.isLiked(params.ids);
+        break;
+      case "like":
+        await catalog.like(params.id, params.on);
+        break;
+      case "savePlaylist":
+        await catalog.savePlaylist(params.id, params.on);
+        break;
+      case "createPlaylist":
+        result = await catalog.createPlaylist(params.name);
+        break;
+      case "renamePlaylist":
+        await catalog.renamePlaylist(params.id, params.name);
+        break;
+      case "deletePlaylist":
+        await catalog.deletePlaylist(params.id);
+        break;
+      case "addToPlaylist":
+        await catalog.addToPlaylist(params.id, params.trackIds);
+        break;
+      case "removeFromPlaylist":
+        await catalog.removeFromPlaylist(params.id, params.trackIds);
+        break;
+      case "comments":
+        result = await catalog.comments(params);
+        break;
+      case "likeComment":
+        await catalog.likeComment(params);
+        break;
+      case "postComment":
+        result = await catalog.postComment(params);
         break;
       case "played":
         await catalog.played(params.id);
@@ -1447,7 +2034,10 @@ async function music(method, params = {}, persistent = false) {
     if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
     if (error2.code !== void 0) throw error2;
     if (error2.kind === "unsupported") throw fail("unsupported", t("暂不支持此操作，目前可以搜索歌曲、浏览歌单和推荐。"));
-    if (error2.kind === "response" && method === "artist") throw fail("", t("暂时无法读取歌手主页，请稍后重试。"));
+    if (error2.kind === "response" && method === "artist") throw fail("", t("暂时无法读取完整歌手主页，请稍后重试。"));
+    if (error2.kind === "response" && method === "album") throw fail("", t("暂时无法读取专辑内容，请稍后重试。"));
+    if (error2.kind === "network" && method === "postComment") throw fail("", t("未能确认评论是否发送成功，请先查看评论列表再决定是否重发。"));
+    if (error2.kind === "response" && method === "postComment") throw fail("", t("评论内容或返回结果异常。评论不能为空且最多 280 字；请先查看评论列表再决定是否重发。"));
     if (error2.kind === "response" && method === "playlist") throw fail("", t(params.id === "qishui:history" ? "暂时无法读取播放历史，请稍后重试。" : "暂时无法读取歌单内容，请稍后重试。"));
     throw authError(error2.kind === "canceled" ? "network" : error2.kind);
   } finally {
@@ -1467,6 +2057,51 @@ async function playlist({ id }) {
 }
 async function artist({ id }) {
   return (await music("artist", { id })).result;
+}
+async function album({ id }) {
+  return (await music("album", { id })).result;
+}
+async function suggest({ query }) {
+  return (await music("suggest", { query })).result;
+}
+async function recent() {
+  return (await music("recent")).result;
+}
+async function liked2({ offset = 0 } = {}) {
+  return (await music("liked", { offset })).result;
+}
+async function isLiked2({ ids }) {
+  return (await music("isLiked", { ids })).result;
+}
+async function like2({ id, on }) {
+  await music("like", { id, on });
+}
+async function savePlaylist2({ id, on }) {
+  await music("savePlaylist", { id, on });
+}
+async function createPlaylist2({ name }) {
+  return (await music("createPlaylist", { name })).result;
+}
+async function renamePlaylist2({ id, name }) {
+  await music("renamePlaylist", { id, name });
+}
+async function deletePlaylist2({ id }) {
+  await music("deletePlaylist", { id });
+}
+async function addToPlaylist2({ id, trackIds }) {
+  await music("addToPlaylist", { id, trackIds });
+}
+async function removeFromPlaylist2({ id, trackIds }) {
+  await music("removeFromPlaylist", { id, trackIds });
+}
+async function comments({ trackId, offset = 0 }) {
+  return (await music("comments", { trackId, offset })).result;
+}
+async function likeComment2({ trackId, commentId, on }) {
+  await music("likeComment", { trackId, commentId, on });
+}
+async function postComment2({ trackId, text }) {
+  return (await music("postComment", { trackId, text })).result;
 }
 async function played({ id }) {
   await music("played", { id });
@@ -1593,17 +2228,32 @@ async function stream({ id, quality = "high" }) {
 }
 export {
   account,
+  addToPlaylist2 as addToPlaylist,
+  album,
   artist,
   browse,
+  comments,
+  createPlaylist2 as createPlaylist,
+  deletePlaylist2 as deletePlaylist,
   home,
+  isLiked2 as isLiked,
+  like2 as like,
+  likeComment2 as likeComment,
+  liked2 as liked,
   lyrics,
   played,
   playlist,
   playlists,
+  postComment2 as postComment,
+  recent,
+  removeFromPlaylist2 as removeFromPlaylist,
+  renamePlaylist2 as renamePlaylist,
+  savePlaylist2 as savePlaylist,
   search,
   signIn,
   signOut,
   stationNext,
   stations,
-  stream
+  stream,
+  suggest
 };

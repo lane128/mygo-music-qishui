@@ -15,7 +15,7 @@ export function frame({ did, url, headerLines }) {
   return Buffer.concat([did, url, headerLines].flatMap(s => { const b = Buffer.from(s); const n = Buffer.alloc(4); n.writeUInt32BE(b.length); return [n, b] }))
 }
 const request = endpoint => ({ did, url: `https://api.qishui.com${endpoint}?aid=386088&app_name=luna_pc&device_id=${did}&fp=${did}`, headerLines: 'accept\r\napplication/json\r\nuser-agent\r\nLunaPC/3.7.0(452316191)' })
-const endpoints = ['/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks', '/luna/pc/me/recently-played-media', '/luna/pc/track_v2']
+const endpoints = ['/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks', '/luna/pc/me/recently-played-media', '/luna/pc/track_v2', '/luna/pc/comments', '/luna/pc/me/playlist', ...(await import('../../helper/catalog-core.mjs')).libraryWritePaths]
 const sha = bytes => createHash('sha256').update(bytes).digest('hex')
 function run(file, args, input, cwd) {
   const r = spawnSync(file, args, { input, cwd, timeout: 20000, maxBuffer: 131072, env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8', TMPDIR: cwd } })

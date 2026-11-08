@@ -22,7 +22,7 @@ test('loads playlists, regular playlist tracks, search cursors and public lyrics
   assert.equal(service.for('search')[1].parsed.searchParams.get('cursor'), 'opaque')
   assert.equal(service.for('search')[0].parsed.searchParams.get('device_platform'), 'android')
   assert.equal((await s.api.lyrics({ id: '123' })).lrc, '[00:01.00]歌词')
-  await assert.rejects(s.api.search({ query: '音乐', kind: 'albums' }), error => error.code === 'unsupported')
+  await assert.rejects(s.api.search({ query: '音乐', kind: 'shows' }), error => error.code === 'unsupported')
   assert.equal(service.for('search').length, 2)
   assert.equal(s.spawned(), 0)
   await s.api.signOut()

@@ -257,7 +257,7 @@ test('maps MyGO search offsets through real server cursors without guessing them
   cursors.length = 0
   await catalog.search({ query: '音乐', offset: 2, cursor: 'opaque-next' })
   assert.deepEqual(cursors, ['opaque-next'])
-  await assert.rejects(catalog.search({ query: '音乐', kind: 'albums' }), e => e.kind === 'unsupported')
+  await assert.rejects(catalog.search({ query: '音乐', kind: 'shows' }), e => e.kind === 'unsupported')
 })
 
 // Signatures must bind the final URL, exact body bytes and one cookie header, with redirects disabled.
