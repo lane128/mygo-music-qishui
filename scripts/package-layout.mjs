@@ -7,7 +7,7 @@ const developmentHelpers = ['helper/worker.mjs', 'helper/resource.cjs', 'helper/
 export const runtimeSource = [
   'plugin.json', 'index.js', 'package.json', 'package-lock.json', 'README.md', 'NOTICE.md', 'PLAYBACK-HISTORY.md', 'LICENSE', 'src',
   'helper/catalog-core.mjs', 'helper/protocol.mjs', 'helper/client-profile.mjs', 'helper/json-body.mjs',
-  'helper/avatar.mjs', 'helper/comments.mjs', 'helper/library-actions.mjs',
+  'helper/avatar.mjs', 'helper/comments.mjs', 'helper/membership.mjs', 'helper/library-actions.mjs',
   'helper/discovery.mjs', 'helper/history.mjs', 'helper/scene-pages.mjs', 'helper/home-page.mjs', 'helper/exploration.mjs',
   'helper/m4a-gapless.mjs', 'helper/ffmpeg-args.mjs',
   'scripts/build.mjs', 'scripts/package.mjs', 'scripts/package-layout.mjs', 'scripts/build-native.mjs',
@@ -16,7 +16,7 @@ export const runtimeSource = [
   'native/windows-runner/main_windows.go', 'native/windows-runner/go.mod', 'native/windows-runner/go.sum', 'native/windows-runner/README',
 ]
 export const validationSource = [
-  'VALIDATION.md', 'test', 'scripts/preflight.mjs', 'scripts/host-ui-fixture.mjs', 'scripts/prepare-node.mjs',
+  'VALIDATION.md', 'RELEASE.md', 'CLAUDE.md', 'test', 'scripts/release.mjs', 'scripts/preflight.mjs', 'scripts/host-ui-fixture.mjs', 'scripts/prepare-node.mjs',
   'scripts/verify-windows.mjs', 'scripts/verify-windows.cmd', 'scripts/build-audio-fixtures.mjs',
   'native/windows-runner/tests', 'native/worker', 'native/signer', ...developmentHelpers,
 ]
@@ -29,7 +29,7 @@ export function checkPackageLayout(files, { validation = false } = {}) {
       /(?:^|\/)tests?(?:\/|\.)/.test(name) || /_test\.go$/.test(name) || /\.test\.(?:cpp|mjs)$/.test(name) ||
       name.startsWith('native/worker/testdata/') || name === 'native/signer/validate.mjs' ||
       /\.test(?:\.exe)?$/i.test(name) || developmentHelpers.includes(name) ||
-      /^scripts\/(?:verify-windows\.(?:cmd|mjs)|host-ui-fixture\.mjs|build-audio-fixtures\.mjs|prepare-node\.mjs|preflight\.mjs)$/.test(name)
+      /^scripts\/(?:verify-windows\.(?:cmd|mjs)|host-ui-fixture\.mjs|build-audio-fixtures\.mjs|prepare-node\.mjs|preflight\.mjs|release\.mjs)$/.test(name)
     )) throw new Error('Runtime package contains an image or validation-only file: ' + name)
   }
 }

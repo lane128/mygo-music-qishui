@@ -1,4 +1,5 @@
 // Shared music response and session helpers, ported from mygo-cloudmusic.
+import { accountTier, memberName } from './membership.mjs'
 export const API = 'https://api.qishui.com'
 export const SESSION_NAMES = new Set(['sessionid', 'sessionid_ss', 'sid_guard', 'sid_tt'])
 export const error = kind => Object.assign(new Error(kind), { kind })
@@ -64,16 +65,14 @@ function imageURL(value, suffix = '') {
   }
 }
 
-export function profileOf(payload) {
+export function profileOf(payload, commerce) {
   const p = payload.my_info || payload.user
   if (!p || !/^\d+$/.test(String(p.id || ''))) throw error('response')
   const nickname = [p.nickname, p.public_name].find(value => typeof value === 'string' && value.trim()) || '汽水音乐用户'
-  // is_vip is the account service's current membership decision. A tier alone,
-  // an unknown flag or an expired/non-member profile must never create a badge.
-  const tier = p.is_vip === true ? (p.vip_stage === 'svip' ? 'SVIP' : ['vip', 'free_vip'].includes(p.vip_stage) ? 'VIP' : '') : ''
+  const tier = accountTier(p, commerce)
   return {
     id: String(p.id),
-    name: tier ? `${tier} · ${nickname}` : nickname,
+    name: memberName(nickname, tier),
     imageUrl: imageURL(p.avatar_url) || imageURL(p.larger_avatar_url) ||
       imageURL(p.medium_avatar_url, '~c5_300x300.jpg') || imageURL(p.thumb_avatar_url, '~c5_100x100.jpg') ||
       imageURL(p.url_avatar, '~c5_300x300.jpg'),

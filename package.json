@@ -1,6 +1,6 @@
 {
   "name": "mygo-music-qishui-app-login",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "private": true,
   "type": "module",
   "license": "AGPL-3.0-only",
@@ -17,7 +17,8 @@
     "prepare:windows": "node scripts/prepare-windows.mjs",
     "verify:windows": "node scripts/verify-windows.mjs",
     "preflight": "node scripts/preflight.mjs",
-    "package": "node scripts/package.mjs"
+    "package": "node scripts/package.mjs",
+    "release": "node scripts/release.mjs"
   },
   "devDependencies": {
     "esbuild": "0.25.12",

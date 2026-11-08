@@ -139,11 +139,14 @@ test('restores legacy browser sessions, preserves network failures, and clears o
   const s = await sandbox([], legacy, { allowSpawn: false, replies: [profileReply(), () => { throw Error('synthetic network') }, json({}, [], 401)] })
   assert.equal((await s.api.account()).id, profile.id)
   await assert.rejects(s.api.account(), e => e.kind === 'network')
-  assert.equal(s.state.get('session'), legacy)
+  assert.deepEqual(JSON.parse(JSON.stringify(s.state.get('session').cookies)), [{
+    name: 'sessionid', value: legacy.cookies[0].value, domain: 'qishui.com', path: '/', hostOnly: false, expires: 0,
+  }])
+  assert.equal(s.state.get('session').account.id, profile.id)
   assert.equal(await s.api.account(), null)
   assert.equal(s.state.has('session'), false)
   assert.equal(await s.api.account(), null)
-  assert.equal(s.authCalls.length, 3)
+  assert.equal(s.authCalls.length, 4)
   assert.equal(s.spawned(), 0)
 })
 

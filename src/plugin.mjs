@@ -1,6 +1,8 @@
 // Built into standalone index.js. MyGO performs authentication, catalogue
 // requests and presentation; native helpers handle offline signing and audio.
-import { Catalog, requestJSON } from '../helper/catalog-core.mjs';
+import { Catalog, requestJSON, pcCatalogParams } from '../helper/catalog-core.mjs';
+import { accountTier, memberName, COMMERCE_PATH } from '../helper/membership.mjs';
+import { signedClient } from '../helper/client-profile.mjs';
 import { scenePage } from '../helper/scene-pages.mjs';
 import { discoverySection } from '../helper/exploration.mjs';
 const SESSION_KEY = "session";
@@ -120,6 +122,7 @@ function startHelper() {
 const AUTH_API = "https://api.qishui.com";
 const AUTH_SESSIONS = new Set(["sessionid", "sessionid_ss", "sid_guard", "sid_tt"]);
 const accountRequests = new Set();
+let accountRefresh;
 
 function authError(kind) {
   const messages = {
@@ -212,11 +215,11 @@ function authPayload({ status, body }) {
   return value;
 }
 
-function authProfile(payload) {
+function authProfile(payload, commerce) {
   const p = payload.my_info || payload.user;
   if (!p || !/^\d+$/.test(String(p.id || ""))) throw authError("response");
   const nickname = [p.nickname, p.public_name].find(v => typeof v === "string" && v.trim()) || "汽水音乐用户";
-  const tier = p.is_vip === true ? (p.vip_stage === "svip" ? "SVIP" : ["vip", "free_vip"].includes(p.vip_stage) ? "VIP" : "") : "";
+  const tier = accountTier(p, commerce);
   const image = (value, suffix = "") => {
     const https = raw => { try { return typeof raw === "string" && new URL(raw).protocol === "https:" ? raw : undefined; } catch { return undefined; } };
     if (typeof value === "string") return https(value);
@@ -233,7 +236,7 @@ function authProfile(payload) {
     }
   };
   return {
-    id: String(p.id), name: tier ? `${tier} · ${nickname}` : nickname,
+    id: String(p.id), name: memberName(nickname, tier),
     imageUrl: image(p.avatar_url) || image(p.larger_avatar_url) || image(p.medium_avatar_url, "~c5_300x300.jpg") || image(p.thumb_avatar_url, "~c5_100x100.jpg") || image(p.url_avatar, "~c5_300x300.jpg"),
   };
 }
@@ -319,13 +322,13 @@ async function authBody(response) {
   }
 }
 
-async function authRequest(ctx, raw, { method = "GET", headers = {}, body } = {}, redirects = false) {
+async function authRequest(ctx, raw, { method = "GET", headers = {}, body, timeoutMS = 20000 } = {}, redirects = false) {
   for (let hop = 0; hop < 6; hop++) {
     authCurrent(ctx);
     if (!authURL(raw)) throw authError("response");
     const controller = new AbortController();
     ctx.controller = controller;
-    const timer = setTimeout(() => controller.abort(), 20000);
+    const timer = setTimeout(() => controller.abort(), timeoutMS);
     let response;
     try {
       const cookie = authCookies(ctx.jar, raw);
@@ -354,6 +357,33 @@ async function authRequest(ctx, raw, { method = "GET", headers = {}, body } = {}
     }
   }
   throw authError("response");
+}
+
+async function authAccount(ctx, identity) {
+  const payload = authPayload(await authRequest(ctx, AUTH_API + "/luna/pc/me?aid=386088"));
+  // Verify the identity before requesting optional entitlement metadata.
+  authProfile(payload);
+  let commerce;
+  try {
+    const query = pcCatalogParams(identity);
+    query.set('version_name', '3.7.0');
+    query.set('version_code', '30070000');
+    for (const [key, value] of Object.entries(signedClient(host.platform))) query.set(key, value);
+    query.sort();
+    const body = JSON.stringify({ includes: ['membership'] });
+    commerce = authPayload(await authRequest(ctx, AUTH_API + COMMERCE_PATH + '?' + query, {
+      method: 'POST', body, timeoutMS: 5000,
+      headers: { 'User-Agent': 'LunaPC/3.7.0(452316191)', Accept: 'application/json', 'Content-Type': 'application/json; charset=utf-8', 'X-SS-STUB': host.crypto.md5(body).toUpperCase() },
+    }));
+  } catch (error) {
+    // Ordinary metadata failures preserve login; explicit session expiry does not.
+    authCurrent(ctx);
+    if (error.kind === 'session') throw error;
+  }
+  authCurrent(ctx);
+  // Even an unsuccessful optional response can revoke the API session cookie.
+  authCookies(ctx.jar, AUTH_API + '/', true);
+  return authProfile(payload, commerce);
 }
 
 async function authPassport(ctx, path, form, extra = {}) {
@@ -420,7 +450,7 @@ export async function signIn() {
         if (response.status !== 200) throw authError("network");
       }
       authCookies(ctx.jar, AUTH_API + "/", true);
-      const account = authProfile(authPayload(await authRequest(ctx, AUTH_API + "/luna/pc/me?aid=386088")));
+      const account = await authAccount(ctx, ctx.identity);
       authCurrent(ctx);
       // Store only cookies usable by the existing API/music worker. Cookies from
       // login-only hosts or paths must not become credentials for API requests.
@@ -431,8 +461,10 @@ export async function signIn() {
       authStopAccounts();
       await closeMusic();
       authCurrent(ctx);
-      // Commit synchronously after the final cancellation check. A replacement
-      // login must not inherit a session from an attempt that reports cancelled.
+      // Restores started while cleanup awaited still belong to the old session.
+      // Invalidate them immediately before the synchronous new-session commit.
+      ctx.attempt = ++generation;
+      authStopAccounts();
       host.storage.set(SESSION_KEY, session);
       return account;
     }
@@ -444,14 +476,28 @@ export async function signIn() {
 }
 
 export async function account() {
+  if (accountRefresh?.attempt === generation) return accountRefresh.promise;
+  const refresh = { attempt: generation, promise: restoreAccount() };
+  accountRefresh = refresh;
+  try {
+    return await refresh.promise;
+  } finally {
+    if (accountRefresh === refresh) accountRefresh = undefined;
+  }
+}
+
+async function restoreAccount() {
   const saved = host.storage.get(SESSION_KEY);
   if (!saved) return null;
   const ctx = { attempt: generation, jar: [], closed: false };
   accountRequests.add(ctx);
   try {
     ctx.jar = authStored(saved);
-    const profile = authProfile(authPayload(await authRequest(ctx, AUTH_API + "/luna/pc/me?aid=386088")));
+    const profile = await authAccount(ctx, saved);
     authCurrent(ctx);
+    // Persist verified rotations and keep postComment's author consistent.
+    const cookies = ctx.jar.filter(c => authApplies(c, new URL(AUTH_API + '/'))).map(c => ({ ...c }));
+    host.storage.set(SESSION_KEY, { ...saved, cookies, account: profile });
     return profile;
   } catch (error) {
     if (ctx.attempt !== generation) return null;

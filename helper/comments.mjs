@@ -1,5 +1,6 @@
 import { error } from './protocol.mjs'
 import { avatarURL as avatar } from './avatar.mjs'
+import { commentTier, memberName } from './membership.mjs'
 
 const PAGE_SIZE = 20
 const MAX_TRACKS = 8
@@ -27,7 +28,9 @@ function commentOf(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || typeof raw.content !== 'string') throw error('response')
   const artist = raw.user_artist_info?.artist_brief
   const isArtist = typeof artist?.name === 'string' && !!artist.name.trim()
-  const author = isArtist ? artist.name : typeof raw.user?.nickname === 'string' && raw.user.nickname.trim() ? raw.user.nickname : '汽水音乐用户'
+  const name = isArtist ? artist.name : typeof raw.user?.nickname === 'string' && raw.user.nickname.trim() ? raw.user.nickname : '汽水音乐用户'
+  // The official comment badge belongs to raw.user even for an artist identity.
+  const author = memberName(name, commentTier(raw.user))
   const avatarUrl = isArtist ? avatar(artist.url_avatar) || avatar(artist.thumb_avatar_url) : avatar(raw.user?.url_avatar) || avatar(raw.user?.thumb_avatar_url)
   const result = { id: idOf(raw.id, true), author, ...(avatarUrl ? { avatarUrl } : {}), text: raw.content }
   if (raw.count_digged != null) result.likes = integer(raw.count_digged)

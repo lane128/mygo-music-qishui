@@ -2,9 +2,11 @@
 
 为 [MyGO Music](https://github.com/egoist/mygo-music) 接入汽水音乐，使用汽水音乐 App 扫码登录，支持搜索、歌单、推荐、电台、播放历史、歌手与专辑，以及评论和音乐库操作。
 
-**当前版本：1.0.9。** 本轮补齐歌手单曲与专辑列表、分类搜索、评论、歌曲喜欢和歌单编辑，并修复评论与歌手头像的地址处理。用户已确认 macOS、Windows 两平台本轮基础功能自测通过。
+**当前源码版本：1.0.10。** 正式发布状态与安装包以 [Releases](https://github.com/lane128/mygo-music-qishui/releases) 为准。1.0.9 的歌手、专辑、评论和音乐库基础功能已由用户确认 macOS、Windows 两平台自测通过。
 
 安装包使用 MyGO 插件沙箱和包内原生辅助程序，**不包含 Node，也无需 Chrome、Edge 或自行安装 FFmpeg**。
+
+当前源码包含会员显示修复：登录及恢复账号时优先读取当前会员权益，区分 VIP / SVIP；评论作者有明确等级时显示 `VIP · 昵称` 或 `SVIP · 昵称`。这是文字前缀，不是汽水官方图形徽标，也不修改服务端昵称。权益查询发生普通网络或响应错误时保留账号资料中的已确认等级；明确会话失效或登录 Cookie 被撤销时要求重新登录，恢复账号时保存服务器轮换后的 Cookie。这些改动未包含在 1.0.9 正式安装包中；真实账号验收情况见 [验证记录](VALIDATION.md)。
 
 ## 安装与升级
 
@@ -28,6 +30,12 @@ https://github.com/lane128/mygo-music-qishui
 暂不提供 Intel Mac、Windows ARM64 或 x32/386 包。官方 MyGO 没有 32 位 Windows 宿主，Windows ARM64 的签名组件尚未适配。
 
 也可以在 [MyGO 插件目录](https://music.egoist.dev/zh/plugins) 查找此插件，目录更新可能有索引延迟。
+
+## 1.0.10 改动
+
+- **macOS 音频**：改用包内精简 FFmpeg，修复旧转换器的满幅样本溢出；AAC 转为 24 位 FLAC，保留来源音质等级，并在容器信息完整一致时处理首尾填充。
+- **会员显示**：账号优先读取当前权益，区分 VIP / SVIP；评论显示等级文字前缀，保留歌手身份与头像。
+- **会话恢复**：权益请求明确返回登录失效时清理旧会话，保留有效的 Cookie 轮换；普通权益查询故障继续使用账号资料中的等级。
 
 ## 1.0.9 更新
 
@@ -70,7 +78,7 @@ https://github.com/lane128/mygo-music-qishui
 
 歌曲、歌单、歌手和听歌模式使用官方 HTTPS 图片，插件不内置或重新着色封面。历史为空或首歌缺图时由宿主默认显示。部分官方模式图标为白色透明图，在 MyGO 浅色主题中对比度较低。卡片布局、比例、字体及列表缓存由 MyGO 统一管理；本项目只实现插件功能，不修改宿主。
 
-本轮 macOS、Windows 基础功能已由用户自测确认通过；自动化在 macOS 上运行，Windows 侧另有交叉构建、静态与宿主安装检查。用户自测不替代完整 Windows 隔离测试程序或 macOS 下载后的 Gatekeeper 检查。验证范围见 [验证记录](VALIDATION.md)。
+自动化在 macOS 上运行；Windows 交叉构建、静态检查和宿主安装检查不等同于 Windows 实机执行。各版本的自动化结果、真实账号、试听及两平台人工验收情况统一见 [验证记录](VALIDATION.md)。
 
 ## 开发与验证
 
@@ -82,6 +90,8 @@ npm run build
 npm test
 npm run test:native
 ```
+
+版本准备和发布遵循 [发布流程](RELEASE.md)，统一入口的用法见该文件；本地准备与远端发布分开执行。
 
 修改 `src/plugin.mjs` 与共享模块后运行构建，生成宿主入口 `index.js`。`npm test` 检查入口与源码同步，执行 JavaScript 回归、实际原生进程 IPC 和 Go 单元测试；`test:native` 执行 Go race 检查。
 
@@ -105,7 +115,7 @@ npm run build:ffmpeg -- /absolute/new/macos-audio /absolute/FFMPEG-SOURCE.tar.xz
 
 设置 `QISHUI_NATIVE_DIR` 指向已核验的官方 3.7.0 原生组件目录，`QISHUI_FFMPEG_DIR` 指向上述 macOS 音频构建目录，再运行 `npm run package`。构建器校验组件哈希和 FFmpeg 可执行文件签名。
 
-当前源码包含**尚未发布的 macOS FFmpeg 测试改动**：AAC 转为 24 位 FLAC，保留源采样率、声道与来源音质等级，避免旧 AudioToolbox 路径的满幅样本溢出。对于无编辑列表且具有完整、一致 `iTunSMPB` 信息的单音轨 M4A，按容器中的编码延迟和有效样本数裁剪首尾填充；其他文件采用 FFmpeg 的默认时序，不按歌曲标称时长猜测裁剪。此改动仍需真实歌曲试听，不代表 v1.0.9 正式资产已更新。
+1.0.10 源码中的 **macOS FFmpeg 改动**：AAC 转为 24 位 FLAC，保留源采样率、声道与来源音质等级，避免旧 AudioToolbox 路径的满幅样本溢出。对于无编辑列表且具有完整、一致 `iTunSMPB` 信息的单音轨 M4A，按容器中的编码延迟和有效样本数裁剪首尾填充；其他文件采用 FFmpeg 的默认时序，不按歌曲标称时长猜测裁剪。各版本的试听与实机验收情况见 [验证记录](VALIDATION.md)；此描述不改变 v1.0.9 正式资产。
 
 Windows x64 交叉打包固定使用 macOS arm64、Xcode 命令行工具、`xz` 和 Zig 0.15.2。按 `scripts/ffmpeg-config.mjs` 下载固定源码和工具链归档，运行：
 

@@ -15,13 +15,14 @@ export const confirmedReply = () => json({ error_code: 0, data: { status: 'confi
 export const profileReply = (id = profile.id) => json({ my_info: { id, nickname: profile.name } })
 
 // Execute the real standalone plugin; only the remote service and music worker are replaced.
-export async function sandbox(queues = [], saved, { replies = [], request, sign = false, allowSpawn = true, clock, timer, crypto, platform = 'darwin', arch = 'arm64', dir = '/plugin fixture #1', waitForClose = async () => 0 } = {}) {
+export async function sandbox(queues = [], saved, { replies = [], request, commerce = () => json({}), sign = false, allowSpawn = true, clock, timer, crypto, platform = 'darwin', arch = 'arm64', dir = '/plugin fixture #1', waitForClose = async () => 0 } = {}) {
   const state = new Map(saved ? [['session', saved]] : [])
   const prompts = [], calls = [], authCalls = [], pendingTimers = new Set()
   let closed = 0, spawned = 0, queued = 0
   const invokeFetch = async (url, options) => {
     authCalls.push({ url, options })
     if (request) { const reply = await request(url, options); if (reply !== undefined) return reply }
+    if (new URL(url).pathname === '/luna/pc/commerce/v2/commerce_info') return commerce(url, options)
     if (new URL(url).pathname === '/luna/pc/track_v2') {
       assert.equal(options.headers['x-helios'], 'fixture-helios')
       assert.equal(options.headers['x-medusa'], 'fixture-medusa')

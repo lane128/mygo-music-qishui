@@ -140,7 +140,16 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			body = `{"error_code":0,"data":{"status":"confirmed"}}`
 			headers.Add("Set-Cookie", strings.Join([]string{"sessionid", "test-session-value"}, "=")+"; Path=/; Secure; HttpOnly")
 		case "/luna/pc/me":
-			body = `{"my_info":{"id":7123456789012345678,"nickname":"Test Account","is_vip":true,"vip_stage":"svip"}}`
+			// /me's VIP stage must not hide the current SVIP commerce tier.
+			body = `{"my_info":{"id":7123456789012345678,"nickname":"Test Account","is_vip":true,"vip_stage":"vip"}}`
+		case "/luna/pc/commerce/v2/commerce_info":
+			var request struct {
+				Includes []string `json:"includes"`
+			}
+			if r.Method != "POST" || json.NewDecoder(r.Body).Decode(&request) != nil || len(request.Includes) != 1 || request.Includes[0] != "membership" {
+				return nil, fmt.Errorf("invalid commerce membership request")
+			}
+			body = `{"membership":{"is_membership":true,"membership_type":"svip"}}`
 		case "/luna/pc/track_v2":
 			body = `{"track":{"id":"91","duration":180000},"track_player":{"video_model":{"video_duration":180,"video_list":[]}}}`
 		case "/luna/pc/me/playlist":
@@ -158,7 +167,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			if r.URL.Query().Get("group_id") != "91" {
 				return nil, fmt.Errorf("invalid comments track")
 			}
-			body = `{"comments":[{"id":"41","content":"Fixture comment","count_digged":3,"time_created":1735689600,"user_digged":true,"user":{"nickname":"Fixture Author","thumb_avatar_url":{"uri":"listener","urls":["https://images.example.test/aweme/100x100/listener.jpeg?from=fixture&size=100%2f100+small"],"need_complete_url":true}}}],"count":"1","has_more":false}`
+			body = `{"comments":[{"id":"41","content":"Fixture comment","count_digged":3,"time_created":1735689600,"user_digged":true,"user":{"nickname":"Fixture Author","is_vip":true,"vip_stage":"svip","thumb_avatar_url":{"uri":"listener","urls":["https://images.example.test/aweme/100x100/listener.jpeg?from=fixture&size=100%2f100+small"],"need_complete_url":true}}}],"count":"1","has_more":false}`
 		case "/luna/pc/comments/action":
 			if payload.GroupID != "91" || payload.CommentID != "41" || (payload.ActionType != 1 && payload.ActionType != 3) {
 				return nil, fmt.Errorf("invalid comment thumb action")
@@ -325,6 +334,9 @@ func verifyQishuiCoreCapabilities(t *testing.T, p *Plugin) {
 	comments, err := p.Comments("91", 0)
 	if err != nil || len(comments.Comments) != 1 || comments.Total != 1 || !comments.Comments[0].Liked || comments.Comments[0].Likes != 3 || comments.Comments[0].Time != 1735689600000 {
 		t.Fatalf("comments mapping failed: %v", err)
+	}
+	if comments.Comments[0].Author != "SVIP · Fixture Author" {
+		t.Fatal("comment membership prefix did not reach the host")
 	}
 	if comments.Comments[0].AvatarURL != "https://images.example.test/aweme/100x100/listener.jpeg?from=fixture&size=100%2f100+small" {
 		t.Fatal("complete comment avatar URL changed in the host sandbox")
@@ -669,7 +681,7 @@ func TestQishuiPluginNetworkOnlyLogin(t *testing.T) {
 	if b, e := again.Account(); e != nil || b != nil {
 		t.Fatal("sandbox sign-out retained credentials")
 	}
-	if calls.Load() != 17 {
+	if calls.Load() != 19 {
 		t.Fatal("unexpected authentication or unsigned catalog requests")
 	}
 }
