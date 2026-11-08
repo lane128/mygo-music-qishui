@@ -2,6 +2,13 @@
 
 日期：2026-11-08。最近正式发布版本为 **1.0.10**，包含下述会员显示修复与 macOS FFmpeg 改动；发布不代表尚未完成的人工验收已通过。本机自动化环境：macOS arm64、Node.js 24.15.0、Go 1.27.3；没有本机 Windows 执行环境。用户此前确认两平台 1.0.9 基础功能自测通过，与本轮音频改动的初步试听反馈分开记录。除最前面的当前开发记录外，下方各“未发布”小节均为历史快照，其中的旧版本号、待验收状态、候选包路径和“没有发布”描述仅适用于当时。历史浏览器验证使用的 Chrome、Playwright 不属于运行依赖。
 
+## 1.0.10 补充 macOS / Windows 架构（2026-11-08）
+
+- 用户明确将范围收拢为 macOS 和 Windows，并要求保留 1.0.10、直接发布后等待反馈。本轮只补充 `plugin-darwin-amd64.zip` 与 `plugin-windows-arm64.zip`；原 macOS arm64 / Windows amd64 附件和 `v1.0.10` 标签保持不变。新增平台构建源码提交到 `main`，随新增 ZIP 提供对应源码；原标签仍对应最初两个附件。
+- 四架构完整包已完成构建、组件哈希与架构、许可证、源码及运行/验证包一致性检查。源码测试 262 通过、6 项可选跳过、0 失败，Go 单元与 race 通过；Apple Silicon 包内原生 30 组、适配器 23 项，以及 MyGO 0.1.20 / 0.1.22 各六项顶层宿主检查通过。错误架构负控有效，独立静态审查未发现明确缺陷；最终输入与实际复用情况以 `dist/platform-compatibility/candidate/report.json` 为准。
+- Intel macOS 和 Windows 本轮实机执行、Windows 11 ARM64 下 x64 子进程转译与 AppContainer 组合、真实账号与音频设备试听仍未全部验收。用户明确选择先公开收集反馈，不将这些项目改记为通过；候选 `readyForRelease` 保留原检查结论，发布授权和附件事实另记 `publication.json`。Windows ARM64 要求 Windows 11 x64 转译，Linux 不在本轮发布范围。
+- 回滚：现有 macOS arm64 / Windows amd64 用户无需更新；新平台遇到异常可暂停使用并反馈，旧 Release 没有这两种架构的完整运行包。源码可撤销本次平台适配提交，不移动原版本标签。
+
 ## 1.0.10 发布与固定发布入口（2026-11-08）
 
 - 用户确认发布流程，授权实现统一入口、准备新版本并提交项目 `CLAUDE.md`，随后明确授权推送和发布。已将 `07a5e55` 推送至 `main` 并发布 [v1.0.10](https://github.com/lane128/mygo-music-qishui/releases/tag/v1.0.10)，附件仅含已验证的 macOS arm64 / Windows amd64 两个运行 ZIP；发布说明如实保留人工验收未完成项。流程见 `RELEASE.md`，本地候选与原始日志位于 `dist/release-1.0.10-candidate/`，其中 `report.json` 绑定发布标签源码，不因发布收尾记录而重建已验证运行包。

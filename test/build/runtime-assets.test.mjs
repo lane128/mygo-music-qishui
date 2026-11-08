@@ -9,10 +9,11 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 // A 32-bit or wrong-platform binary must never enter an amd64 plugin ZIP.
-test('Windows package validation rejects x32/ARM targets and wrong PE architectures', () => {
+test('Windows package validation accepts supported hosts and enforces each PE architecture', () => {
   assert.equal(packageTarget('windows-amd64').arch, 'amd64')
   assert.equal(packageTarget('win32-x64').platform, 'windows')
-  for (const target of ['windows-386', 'win32-ia32', 'windows-arm64', 'linux-amd64']) assert.throws(() => packageTarget(target))
+  for (const target of ['windows-arm64', 'win32-arm64']) assert.deepEqual(packageTarget(target), { platform: 'windows', arch: 'arm64', windows: true })
+  for (const target of ['windows-386', 'win32-ia32', 'linux-amd64', 'linux-arm64']) assert.throws(() => packageTarget(target))
   const pe = Buffer.alloc(256)
   pe.write('MZ'); pe.writeUInt32LE(128, 0x3c); pe.write('PE\0\0', 128); pe.writeUInt16LE(0x8664, 132); pe.writeUInt16LE(0x20b, 152)
   assert.doesNotThrow(() => checkWindowsPE(pe, 'fixture.exe'))
@@ -20,6 +21,11 @@ test('Windows package validation rejects x32/ARM targets and wrong PE architectu
     pe.writeUInt16LE(machine, 132)
     assert.throws(() => checkWindowsPE(pe, 'fixture.exe'), /x64/)
   }
+  pe.writeUInt16LE(0xaa64, 132)
+  assert.doesNotThrow(() => checkWindowsPE(pe, 'arm64.exe', 'arm64'))
+  pe.writeUInt16LE(0x8664, 132)
+  assert.throws(() => checkWindowsPE(pe, 'arm64.exe', 'arm64'), /arm64/)
+  assert.throws(() => checkWindowsPE(pe, 'unknown.exe', 'other'))
   assert.throws(() => checkWindowsPE(Buffer.from('not PE'), 'bad.exe'))
   pe.writeUInt32LE(0xffffffff, 0x3c)
   assert.throws(() => checkWindowsPE(pe, 'bad.exe'))
@@ -58,6 +64,19 @@ test('actual audio PE guard rejects removed hardening and injected external DLL 
   const relocation = Buffer.from(original)
   relocation.writeUInt32LE(0, offset + 112 + 5 * 8 + 4)
   assert.throws(() => inspectWindowsAudio(relocation), /relocation/)
+})
+
+test('macOS Intel target uses amd64 host naming and rejects cross-architecture audio', () => {
+  for (const target of ['darwin-amd64', 'darwin-x64']) assert.deepEqual(packageTarget(target), { platform: 'darwin', arch: 'amd64', windows: false })
+  const executable = Buffer.alloc(56)
+  executable.writeUInt32LE(0xfeedfacf, 0); executable.writeUInt32LE(0x01000007, 4); executable.writeUInt32LE(2, 12)
+  executable.writeUInt32LE(1, 16); executable.writeUInt32LE(24, 20)
+  executable.writeUInt32LE(0x32, 32); executable.writeUInt32LE(24, 36); executable.writeUInt32LE(1, 40); executable.writeUInt32LE(0x000c0000, 44)
+  assert.equal(inspectDarwinAudio(executable, 'amd64').minimumMacOS, 0x000c0000)
+  assert.throws(() => inspectDarwinAudio(executable), /arm64/)
+  executable.writeUInt32LE(0x0100000c, 4)
+  assert.throws(() => inspectDarwinAudio(executable, 'amd64'), /amd64/)
+  assert.throws(() => inspectDarwinAudio(executable, 'other'), /executable/)
 })
 
 test('macOS audio guard rejects newer OS requirements and wrong architecture', () => {

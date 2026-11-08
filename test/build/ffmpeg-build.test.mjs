@@ -5,6 +5,10 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { buildFFmpeg } from '../../scripts/build-ffmpeg.mjs'
 
+test('Windows ARM64 packages cannot relabel an x64 FFmpeg build as ARM64', async () => {
+  await assert.rejects(buildFFmpeg('/unused', { target: 'windows-arm64' }), /pinned windows-amd64/)
+})
+
 test('FFmpeg builder rejects changed source before extraction or touching existing output', { skip: process.platform !== 'darwin' || process.arch !== 'arm64' }, async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'qishui-ffmpeg-input-test-'))
   try {

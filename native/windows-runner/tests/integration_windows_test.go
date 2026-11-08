@@ -1,4 +1,4 @@
-//go:build windows && amd64
+//go:build windows && (amd64 || arm64)
 
 package runner_test
 
@@ -108,7 +108,7 @@ func helper(args []string) int {
 func launcher(t *testing.T) string {
 	t.Helper()
 	if os.Getenv("QISHUI_TEST_WINDOWS") != "1" {
-		t.Skip("set QISHUI_TEST_WINDOWS=1 on Windows amd64 to run real AppContainer tests")
+		t.Skip("set QISHUI_TEST_WINDOWS=1 on Windows amd64/arm64 to run real AppContainer tests")
 	}
 	path := os.Getenv("QISHUI_WINDOWS_RUNNER")
 	if path == "" {

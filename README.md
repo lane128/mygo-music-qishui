@@ -12,10 +12,16 @@
 
 需要 **MyGO 0.1.20 或更新版本**。
 
-| 系统 | Release 安装包 | 验证情况 |
+[MyGO 下载页](https://music.egoist.dev/zh/download) 提供下列六种系统与架构组合；插件当前发布包的覆盖情况如下。macOS 主程序要求 macOS 13 或更新版本。
+
+| 系统与架构 | 1.0.10 Release 安装包 | 验证情况 |
 | --- | --- | --- |
-| macOS Apple Silicon | `plugin-darwin-arm64.zip` | 已完成本机原生组件、音频夹具、宿主自动化及用户基础功能自测 |
-| Windows 10/11 x64 | `plugin-windows-amd64.zip` | 实验性支持；已交叉构建、静态检查和验证宿主安装，用户已确认本轮基础功能自测通过 |
+| macOS Apple Silicon（arm64） | `plugin-darwin-arm64.zip` | 原生、音频夹具与宿主自动化通过；本轮完整试听待验收 |
+| macOS Intel（amd64） | `plugin-darwin-amd64.zip` | 实验性支持；构建、静态与宿主安装检查通过，实机执行待用户反馈 |
+| Windows x64（amd64） | `plugin-windows-amd64.zip` | 实验性支持；交叉构建、静态与宿主安装检查通过，本轮实机执行待验收 |
+| Windows ARM64（arm64） | `plugin-windows-arm64.zip` | 实验性支持；要求 Windows 11 x64 转译，静态与宿主安装检查通过，实机执行待用户反馈 |
+| Linux x64（amd64） | 尚未提供 | 待确认签名组件来源，并实现 Linux 隔离与完整运行包 |
+| Linux ARM64（arm64） | 尚未提供 | 待确认签名组件来源，并实现 Linux 隔离与完整运行包 |
 
 [一键安装](mygo-music://install-plugin?repo=lane128/mygo-music-qishui)，或在 MyGO「设置 → 插件 → +」中输入仓库地址：
 
@@ -27,12 +33,13 @@ https://github.com/lane128/mygo-music-qishui
 
 已通过仓库安装的用户，可在插件菜单中「检查更新」。ZIP 导入显示「来自本机」，无法通过仓库检查更新；如需切换为仓库安装，可先移除插件再输入仓库地址，MyGO 会保留插件数据。1.0.9 保持原插件 ID 和登录态格式，会话过期时重新扫码即可。由本地自测包升级时，更新后完全退出并重新打开 MyGO，避免继续使用旧的歌手资料与图片缓存。
 
-暂不提供 Intel Mac、Windows ARM64 或 x32/386 包。官方 MyGO 没有 32 位 Windows 宿主，Windows ARM64 的签名组件尚未适配。
+本轮聚焦 macOS 与 Windows，Linux 暂不提供运行包，不能用其他系统或架构的 ZIP 代替。官方公开 PC 组件目前没有找到 Linux 签名库，不能只交叉编译 Go helper 就提供完整 Linux 功能。Windows ARM64 构建将 ARM64 worker / 隔离启动器与 x64 签名和音频子进程组合，要求 Windows 11 x64 转译；实机转译与隔离待验收，ARM64 进程不直接加载 x64 DLL。MyGO 下载页未列出 32 位宿主，本插件也不提供 x32/386 包。
 
 也可以在 [MyGO 插件目录](https://music.egoist.dev/zh/plugins) 查找此插件，目录更新可能有索引延迟。
 
 ## 1.0.10 改动
 
+- **补充平台包**：在原 Release 新增 Intel Mac 与 Windows ARM64 实验性运行包；保留原 macOS ARM64、Windows x64 附件和版本标签。新平台实机验证待用户反馈，Windows ARM64 要求 Windows 11 x64 转译。
 - **macOS 音频**：改用包内精简 FFmpeg，修复旧转换器的满幅样本溢出；AAC 转为 24 位 FLAC，保留来源音质等级，并在容器信息完整一致时处理首尾填充。
 - **会员显示**：账号优先读取当前权益，区分 VIP / SVIP；评论显示等级文字前缀，保留歌手身份与头像。
 - **会话恢复**：权益请求明确返回登录失效时清理旧会话，保留有效的 Cookie 轮换；普通权益查询故障继续使用账号资料中的等级。
@@ -101,7 +108,7 @@ npm run test:native
 
 每次打包生成运行 ZIP 和独立的 `-validation.zip`。运行包包含完整运行组件、许可证、对应源码和构建输入，不带图片、测试程序或验证工具。验证包包含相同运行代码，并增加测试与夹具，可独立解压验证。
 
-**正式 Release 仅上传两个平台的运行 ZIP。** MyGO 按文件名中的平台与架构选择附件，不排除 `-validation.zip`，因此验证 ZIP 保留作开发验证，不能与运行 ZIP 混放在用于自动安装的 Release 中。公开源码保留验证工具和构建方式。
+**正式 Release 仅上传运行 ZIP。** v1.0.10 保留原 macOS arm64 / Windows amd64 附件，并按用户决定补充 macOS amd64 / Windows arm64 实验性附件以收集反馈；新增平台的实机验证未完成。原标签不移动，新增平台构建源码见 `main` 和对应 ZIP 内的源码，具体提交记录在 Release 补充说明中。MyGO 按文件名中的平台与架构选择附件，不排除 `-validation.zip`，因此验证 ZIP 保留作开发验证，不能与运行 ZIP 混放在用于自动安装的 Release 中。公开源码保留验证工具和构建方式。
 
 源码测试会明确跳过缺少官方原生组件的检查。完整原生回归先构建并解压对应验证包，将 `QISHUI_NATIVE_ROOT` 设为解压目录的绝对路径。macOS 可直接运行 `test/native-worker.test -test.v -test.timeout=5m`，无需 Node 或 Go 工具链。`bdms.node` 是官方原生动态组件的文件名，不表示安装包包含 Node 解释器。
 
@@ -117,6 +124,15 @@ npm run build:ffmpeg -- /absolute/new/macos-audio /absolute/FFMPEG-SOURCE.tar.xz
 
 1.0.10 源码中的 **macOS FFmpeg 改动**：AAC 转为 24 位 FLAC，保留源采样率、声道与来源音质等级，避免旧 AudioToolbox 路径的满幅样本溢出。对于无编辑列表且具有完整、一致 `iTunSMPB` 信息的单音轨 M4A，按容器中的编码延迟和有效样本数裁剪首尾填充；其他文件采用 FFmpeg 的默认时序，不按歌曲标称时长猜测裁剪。各版本的试听与实机验收情况见 [验证记录](VALIDATION.md)；此描述不改变 v1.0.9 正式资产。
 
+Intel macOS 也从 macOS arm64 交叉构建。使用官方 x64 归档的原生组件，不能使用 arm64 文件代替；设置 `QISHUI_DARWIN_AMD64_NATIVE_DIR`，音频构建输出设为 `QISHUI_DARWIN_AMD64_FFMPEG_DIR`：
+
+```sh
+npm run build:ffmpeg -- /absolute/new/intel-audio /absolute/FFMPEG-SOURCE.tar.xz --target darwin-amd64
+npm run package -- --target darwin-amd64
+```
+
+构建和静态安装检查不执行 Intel 程序；签名、隔离与音频的运行验收需要 Intel Mac 或已安装 Rosetta 的 Mac。此构建入口不会安装 Rosetta。
+
 Windows x64 交叉打包固定使用 macOS arm64、Xcode 命令行工具、`xz` 和 Zig 0.15.2。按 `scripts/ffmpeg-config.mjs` 下载固定源码和工具链归档，运行：
 
 ```sh
@@ -125,6 +141,8 @@ npm run prepare:windows -- /absolute/new/runtime-directory /absolute/new/audio
 ```
 
 设置 `QISHUI_WINDOWS_ASSETS` 指向准备好的运行组件目录，`QISHUI_ZIG` 指向 Zig 0.15.2 可执行文件，再运行 `npm run package -- --target windows-amd64`。所有外部输入先校验哈希。音频源码也可使用包内 `FFMPEG-SOURCE.tar.xz` 离线重建；精简 FFmpeg 只保留 AAC/FLAC、必要 PCM 与重采样，不含网络、视频和设备支持，完整对应源码及许可证随包提供。这些路径和工具只用于开发，插件使用者无需配置。
+
+Windows ARM64 复用上述 x64 官方签名组件和 FFmpeg 资产，仍设置 `QISHUI_WINDOWS_ASSETS` 与 `QISHUI_ZIG`，再运行 `npm run package -- --target windows-arm64`。打包器只将 Go worker、AppContainer 启动器和验证程序编译为 ARM64，逐个校验组件架构；签名器、SDK 与 FFmpeg 为 x64 子进程，因此要求 **Windows 11 ARM64 的 x64 转译支持**。Windows 10 ARM64 不在此构建的运行范围内。完整包的签名、隔离与播放仍需实机验收。
 
 ### Windows 验证
 

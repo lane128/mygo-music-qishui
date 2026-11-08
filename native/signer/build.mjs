@@ -58,7 +58,7 @@ export function inspectWindows(bytes) {
  * overwrite atomically (including existing symlinks). No commit or publication.
  */
 export async function buildSigner({ platform, arch, output, zig } = {}) {
-  assert.ok((platform === 'darwin' && arch === 'arm64') || (platform === 'windows' && arch === 'amd64'), 'Unsupported signer target')
+  assert.ok((platform === 'darwin' && ['arm64', 'amd64'].includes(arch)) || (platform === 'windows' && arch === 'amd64'), 'Unsupported signer target')
   assert.ok(typeof output === 'string' && path.isAbsolute(output), 'Absolute output file required')
   if (zig !== undefined) assert.ok(typeof zig === 'string' && path.isAbsolute(zig), 'Absolute Zig path required')
   try { await lstat(output); throw new Error('Signer output already exists') } catch (e) { if (e.code !== 'ENOENT') throw e }
@@ -74,7 +74,7 @@ export async function buildSigner({ platform, arch, output, zig } = {}) {
     const common = ['-std=c++17', '-Os', '-fvisibility=hidden', '-fstack-protector-strong', '-I', path.join(root, 'include'), path.join(root, 'signer.cpp'), '-o', temporary]
     let checks
     if (platform === 'darwin') {
-      await command('/usr/bin/clang++', ['-arch', 'arm64', '-mmacosx-version-min=12.0', ...common, '-Wl,-export_dynamic', ...napiExports.map(n => '-Wl,-exported_symbol,_' + n)])
+      await command('/usr/bin/clang++', ['-arch', arch === 'amd64' ? 'x86_64' : 'arm64', '-mmacosx-version-min=12.0', ...common, '-Wl,-export_dynamic', ...napiExports.map(n => '-Wl,-exported_symbol,_' + n)])
       await command('/usr/bin/codesign', ['--force', '--sign', '-', '--identifier', 'qishui-native-signer', temporary])
       await command('/usr/bin/codesign', ['--verify', '--strict', temporary])
       const symbols = (await command('/usr/bin/nm', ['-gjU', temporary])).trim().split('\n').filter(n => n.startsWith('_napi_')).map(n => n.slice(1)).sort()

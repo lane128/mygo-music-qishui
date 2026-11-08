@@ -48,6 +48,21 @@ test('loads music after login without settings and keeps stream URLs alive until
   await assert.rejects(s.api.home(), error => error.code === 'signIn')
 })
 
+for (const platform of ['darwin', 'windows']) for (const arch of ['amd64', 'arm64']) {
+  test(`dispatches ${platform}/${arch} signing and playback through its host helper`, async () => {
+    const service = catalogService({ discover: [discovery(['123'], { type: 'playlist' })] }, { platform: platform === 'darwin' ? 'mac' : 'windows' })
+    const audio = { url: 'http://127.0.0.1:12345/platform-fixture', type: 'flac', quality: 'high' }
+    const s = await sandbox([[{ ok: true, result: audio }]], session, { platform, arch, sign: true, request: service.request })
+    try {
+      assert.equal((await s.api.home()).sections[0].playlists[0].id, '123')
+      assertSigner(s.calls[0], 'discover', session)
+      assert.equal((await s.api.stream({ id: '123', quality: 'high' })).url, audio.url)
+      assert.equal(s.calls.at(-1).method, 'stream')
+      assert.equal(s.calls.at(-1).session.cookies, undefined)
+    } finally { await s.api.signOut() }
+  })
+}
+
 // Playback authorization stays in MyGO; native audio receives only this grant and anonymous client metadata.
 test('fetches the signed playback grant in the sandbox before passing it to native audio', async () => {
   const id = '7123456789012345678'

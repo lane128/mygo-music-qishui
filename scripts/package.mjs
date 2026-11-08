@@ -4,30 +4,33 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { zipSync } from 'fflate'
 import path from 'node:path'
-import { DARWIN_FILES, DARWIN_FFMPEG_FILES, WINDOWS_FILES, WINDOWS_FFMPEG_FILES, WINDOWS_SOURCES, checkDigest, checkWindowsPE, inspectWindowsAudio, inspectDarwinAudio, packageTarget, sha256 } from './runtime-assets.mjs'
+import { darwinAssets, DARWIN_AMD64_DOWNLOAD, WINDOWS_FILES, WINDOWS_FFMPEG_FILES, WINDOWS_SOURCES, checkDigest, checkWindowsPE, inspectWindowsAudio, inspectDarwinAudio, packageTarget, sha256 } from './runtime-assets.mjs'
 import { checkPackageLayout, copyPackageSource } from './package-layout.mjs'
 import { buildNative, goCommand } from './build-native.mjs'
 
 await import('./build.mjs')
 const root = fileURLToPath(new URL('..', import.meta.url))
 const args = process.argv.slice(2)
-if (args.length && (args.length !== 2 || args[0] !== '--target')) throw new Error('Usage: npm run package -- [--target windows-amd64]')
+if (args.length && (args.length !== 2 || args[0] !== '--target')) throw new Error('Usage: npm run package -- [--target darwin-arm64|darwin-amd64|windows-amd64|windows-arm64]')
 const target = packageTarget(args[1])
 if (!target.windows && (process.platform !== 'darwin' || process.arch !== 'arm64')) throw new Error('The macOS native package must be built on macOS arm64')
-const inputs = target.windows ? process.env.QISHUI_WINDOWS_ASSETS : process.env.QISHUI_NATIVE_DIR
+const macAssets = target.windows ? null : darwinAssets(target.arch)
+const inputs = target.windows ? process.env.QISHUI_WINDOWS_ASSETS :
+  (target.arch === 'amd64' ? process.env.QISHUI_DARWIN_AMD64_NATIVE_DIR : undefined) || process.env.QISHUI_NATIVE_DIR
 if (!inputs || !path.isAbsolute(inputs)) throw new Error(target.windows ? 'Build requires QISHUI_WINDOWS_ASSETS; prepare verified native/audio assets first.' : 'Build requires QISHUI_NATIVE_DIR with the verified official 3.7.0 native pair.')
-const expected = target.windows ? WINDOWS_FILES : DARWIN_FILES
+const expected = target.windows ? WINDOWS_FILES : macAssets.files
 for (const [name, hash] of Object.entries(expected)) {
   const bytes = await readFile(path.join(inputs, name))
   checkDigest(bytes, hash, name)
   if (target.windows && /\.(?:exe|dll|node)$/.test(name)) checkWindowsPE(bytes, name)
   if (target.windows && name === 'ffmpeg.exe') inspectWindowsAudio(bytes)
 }
-const macAudio = process.env.QISHUI_FFMPEG_DIR
+const macAudio = (target.arch === 'amd64' ? process.env.QISHUI_DARWIN_AMD64_FFMPEG_DIR : undefined) || process.env.QISHUI_FFMPEG_DIR
 if (!target.windows) {
   if (!macAudio || !path.isAbsolute(macAudio)) throw new Error('Build requires QISHUI_FFMPEG_DIR with the pinned macOS audio-only FFmpeg build.')
-  for (const [name, hash] of Object.entries(DARWIN_FFMPEG_FILES)) checkDigest(await readFile(path.join(macAudio, name)), hash, name)
-  inspectDarwinAudio(await readFile(path.join(macAudio, 'ffmpeg')))
+  if (!Object.keys(macAssets.ffmpeg).length) throw new Error('No pinned FFmpeg assets for macOS ' + target.arch)
+  for (const [name, hash] of Object.entries(macAssets.ffmpeg)) checkDigest(await readFile(path.join(macAudio, name)), hash, name)
+  inspectDarwinAudio(await readFile(path.join(macAudio, 'ffmpeg')), target.arch)
   const signature = spawnSync('/usr/bin/codesign', ['--verify', '--strict', path.join(macAudio, 'ffmpeg')], { encoding: 'utf8' })
   if (signature.error || signature.status !== 0) throw new Error('macOS FFmpeg signature verification failed')
 }
@@ -53,12 +56,13 @@ try {
     const runner = path.join(native, 'windows-runner.exe')
     goCommand(runnerModule, target, ['build', '-trimpath', '-buildvcs=false', '-ldflags=-s -w', '-o', runner, '.'])
     const bytes = await readFile(runner)
-    checkWindowsPE(bytes, 'windows-runner.exe')
+    checkWindowsPE(bytes, 'windows-runner.exe', target.arch)
     await writeFile(path.join(native, 'BUILD.json'), JSON.stringify({ ...generated.images, 'windows-runner.exe': sha256(bytes) }, null, 2) + '\n')
     await cp(path.join(goCommand(runnerModule, target, ['list', '-m', '-f', '{{.Dir}}', 'golang.org/x/sys']), 'LICENSE'), path.join(native, 'X-SYS-LICENSE'))
   } else {
-    for (const name of Object.keys(DARWIN_FILES)) await cp(path.join(inputs, name), path.join(native, name))
-    for (const name of Object.keys(DARWIN_FFMPEG_FILES)) await cp(path.join(macAudio, name), path.join(native, name))
+    for (const name of Object.keys(macAssets.files)) await cp(path.join(inputs, name), path.join(native, name))
+    for (const name of Object.keys(macAssets.ffmpeg)) await cp(path.join(macAudio, name), path.join(native, name))
+    if (target.arch === 'amd64') await writeFile(path.join(native, 'SOURCES.json'), JSON.stringify([DARWIN_AMD64_DOWNLOAD], null, 2) + '\n')
   }
   async function archive(suffix) {
     const entries = Object.create(null)
@@ -87,7 +91,7 @@ try {
     const buildFile = path.join(native, 'BUILD.json'), build = JSON.parse(await readFile(buildFile, 'utf8'))
     for (const [name, output] of [['windows-runner.test.exe', runnerTests], ['native-worker.test.exe', workerTests]]) {
       const bytes = await readFile(output)
-      checkWindowsPE(bytes, name); build[name] = sha256(bytes)
+      checkWindowsPE(bytes, name, target.arch); build[name] = sha256(bytes)
     }
     await writeFile(buildFile, JSON.stringify(build, null, 2) + '\n')
   }

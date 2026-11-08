@@ -29,9 +29,9 @@ test('Windows completes, restores and clears QR login without process permission
 
 // The actual bundle must select the Windows signer executable and sign exactly
 // the same Windows request that the host subsequently sends.
-test('Windows signed catalogue uses Windows metadata and the bundled amd64 executable', async () => {
+for (const arch of ['amd64', 'arm64']) test(`Windows signed catalogue uses Windows metadata and the bundled ${arch} helper`, async () => {
   const service = catalogService({ modes: [modes(1)] }, { platform: 'windows' })
-  const s = await sandbox([], session, { platform: 'windows', arch: 'amd64', dir: 'C:\\MyGo #1\\plugin', sign: true, request: service.request })
+  const s = await sandbox([], session, { platform: 'windows', arch, dir: 'C:\\MyGo #1\\plugin', sign: true, request: service.request })
   const stations = await s.api.stations()
   assert.ok(stations.length)
   assert.equal(s.spawned(), 1)

@@ -1,4 +1,4 @@
-// Build-only: pinned audio-only FFmpeg for macOS arm64 or Windows x64.
+// Build-only: pinned audio-only FFmpeg for macOS arm64/amd64 or Windows x64.
 // No global installation, network access, or changes to supplied archives.
 import { spawnSync } from 'node:child_process'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
@@ -6,12 +6,16 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
-import { checkDigest, inspectWindowsAudio, inspectDarwinAudio, sha256 } from './runtime-assets.mjs'
+import { checkDigest, inspectWindowsAudio, inspectDarwinAudio, packageTarget, sha256 } from './runtime-assets.mjs'
 import { FFMPEG_SOURCE, FFMPEG_SOURCE_BUNDLE, ZIG_TOOLCHAIN, FFMPEG_FLAGS } from './ffmpeg-config.mjs'
 
-export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, native = false } = {}) {
+export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, native = false, target: targetName } = {}) {
+  const target = packageTarget(targetName || (native ? ['darwin', 'arm64'].join('-') : 'windows-amd64'))
+  if (native && target.windows) throw new Error('--native conflicts with a Windows target')
+  if (target.windows && target.arch !== 'amd64') throw new Error('Both Windows packages use the pinned windows-amd64 FFmpeg build')
+  native = !target.windows
   if (process.platform !== 'darwin' || process.arch !== 'arm64') throw new Error('The pinned build toolchain requires macOS arm64')
-  if (!output || !path.isAbsolute(output) || !sourceArchive || (!native && !toolchainArchive)) throw new Error('Usage: build-ffmpeg.mjs <new absolute output> <source.tar.gz> <zig.tar.xz> [--native]')
+  if (!output || !path.isAbsolute(output) || !sourceArchive || (!native && !toolchainArchive)) throw new Error('Usage: build-ffmpeg.mjs <new absolute output> <source archive> [zig.tar.xz] [--native | --target darwin-amd64]')
   const source = await readFile(sourceArchive)
   const bundled = sha256(source) === FFMPEG_SOURCE_BUNDLE.sha256
   if (!bundled) checkDigest(source, FFMPEG_SOURCE.sha256, 'FFmpeg source archive')
@@ -39,8 +43,9 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
     if (native) {
       env.MACOSX_DEPLOYMENT_TARGET = '12.0'
       await writeFile(path.join(wrappers, 'native-clang'),
-        '#!/bin/sh\nexec /usr/bin/clang -mmacosx-version-min=12.0 -ffile-prefix-map="$QISHUI_FFMPEG_WORK=/build" "$@"\n', { mode: 0o755 })
-      targetFlags = ['--disable-debug', '--cc=native-clang', '--extra-ldflags=-Wl,-dead_strip']
+        '#!/bin/sh\nexec /usr/bin/clang ' + (target.arch === 'amd64' ? '-arch x86_64 ' : '') + '-mmacosx-version-min=12.0 -ffile-prefix-map="$QISHUI_FFMPEG_WORK=/build" "$@"\n', { mode: 0o755 })
+      targetFlags = ['--disable-debug', '--cc=native-clang', '--extra-ldflags=-Wl,-dead_strip',
+        ...(target.arch === 'amd64' ? ['--enable-cross-compile', '--target-os=darwin', '--arch=x86_64'] : [])]
     } else {
       command('/usr/bin/tar', ['-xf', path.resolve(toolchainArchive), '-C', tools])
       zigRoot = path.join(tools, 'zig-' + ZIG_TOOLCHAIN.host + '-' + ZIG_TOOLCHAIN.version)
@@ -63,8 +68,9 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
     command('/usr/bin/make', ['-j8', native ? 'ffmpeg' : 'ffmpeg.exe'], { cwd: build, env, timeout: 600000 })
     const executable = native ? 'ffmpeg' : 'ffmpeg.exe'
     await cp(path.join(build, executable), path.join(output, executable))
+    if (native && target.arch === 'amd64') command('/usr/bin/codesign', ['--force', '--sign', '-', '--timestamp=none', '--identifier', 'qishui.ffmpeg', path.join(output, executable)])
     const binary = await readFile(path.join(output, executable))
-    if (native) inspectDarwinAudio(binary)
+    if (native) inspectDarwinAudio(binary, target.arch)
     else inspectWindowsAudio(binary)
     await cp(path.join(tree, 'COPYING.GPLv3'), path.join(output, 'FFMPEG-LICENSE'))
     // Ship the full unmodified corresponding source, compressed without timestamps.
@@ -93,7 +99,7 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
       crtSourceBundleSha256 = sha256(crt)
     }
     const metadata = { source: FFMPEG_SOURCE, toolchain: native ? { compiler: 'Apple clang', minimumMacOS: '12.0' } : ZIG_TOOLCHAIN,
-      target: native ? ['darwin', 'arm64'].join('-') : 'windows-amd64', flags,
+      target: [target.platform, target.arch].join('-'), flags,
       generatedSourceFile: { VERSION: FFMPEG_SOURCE.version + '\n' },
       sourceTarSha256: sha256(sourceTar), sourceBundleSha256: sha256(compressed), crtSourceBundleSha256, executableSha256: sha256(binary) }
     await writeFile(path.join(output, 'FFMPEG-BUILD.json'), JSON.stringify(metadata, null, 2) + '\n')
@@ -115,8 +121,15 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
 }
 const entry = process.argv[1] && await realpath(process.argv[1]).catch(() => null)
 if (entry && import.meta.url === pathToFileURL(entry).href) {
-  const [output, sourceArchive, toolchainArchive, mode] = process.argv.slice(2)
-  if (process.argv.length > 6 || mode && mode !== '--native' || toolchainArchive === '--native' && mode) throw new Error('Unknown build mode')
+  const args = process.argv.slice(2)
+  const at = args.indexOf('--target')
+  const target = at < 0 ? undefined : args[at + 1]
+  if (at >= 0) {
+    if (!target || target.startsWith('--')) throw new Error('--target requires a package target')
+    args.splice(at, 2)
+  }
+  const [output, sourceArchive, toolchainArchive, mode] = args
+  if (args.length > 4 || mode && mode !== '--native' || toolchainArchive === '--native' && mode) throw new Error('Unknown build mode')
   const native = toolchainArchive === '--native' || mode === '--native'
-  console.log(JSON.stringify(await buildFFmpeg(output, { sourceArchive, toolchainArchive: native ? undefined : toolchainArchive, native }), null, 2))
+  console.log(JSON.stringify(await buildFFmpeg(output, { sourceArchive, toolchainArchive: native ? undefined : toolchainArchive, native, target }), null, 2))
 }

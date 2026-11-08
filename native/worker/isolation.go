@@ -198,7 +198,7 @@ func cleanupScratch(path string) error {
 }
 
 func isolatedNative(ctx context.Context, plugin, operation string, input []byte, limit int) (result []byte, resultErr error) {
-	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" || runtime.GOOS == "darwin" && runtime.GOARCH != "arm64" || runtime.GOOS == "windows" && runtime.GOARCH != "amd64" {
+	if (runtime.GOOS != "darwin" && runtime.GOOS != "windows") || (runtime.GOARCH != "arm64" && runtime.GOARCH != "amd64") {
 		return nil, errSetup
 	}
 	if ctx.Err() != nil {

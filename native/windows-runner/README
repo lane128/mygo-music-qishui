@@ -1,17 +1,20 @@
-Windows amd64 AppContainer runner
+Windows amd64 / arm64 AppContainer runner
 
 This directory is a standalone Go module. Build with Go >=1.26 (required by
 pinned golang.org/x/sys v0.48.0). The executable needs only Windows system DLLs;
 it does not need Go, PowerShell, a globally installed Node, or administrator rights
-at runtime. Windows 10/11 amd64 are the intended acceptance targets.
+at runtime. Windows 10/11 amd64 and Windows 11 ARM64 are the intended acceptance
+targets. The ARM64 plugin uses an ARM64 worker and launcher, with x64 signer/SDK
+and FFmpeg payloads executed as separate processes through Windows 11 x64
+emulation. AppContainer plus x64 emulation remains pending real-device acceptance.
 
 Protocol
 
   windows-runner.exe --root <absolute-private-staging-directory> \
-    --parent <calling-Node-PID> --timeout-ms <1..22000> -- <absolute.exe> [args...]
+    --parent <calling-worker-PID> --timeout-ms <1..22000> -- <absolute.exe> [args...]
 
-The JS caller creates a NEW private directory for each invocation, copies the
-Node+SDK or FFmpeg runtime and all inputs into it, and removes it after the runner
+The Go worker creates a NEW private directory for each invocation, copies the
+signer+SDK, decode worker or FFmpeg and all inputs into it, and removes it after the runner
 exits. Never pass an existing plugin directory, HOME, or another shared directory.
 The runner rejects drive roots, HOME and its ancestors, Windows directory trees,
 UNC/device paths, reparse points (including ancestors), hard-linked staged files,
@@ -37,7 +40,7 @@ Cancellation and statuses
 
 The caller cancels by creating root/.cancel. The runner checks every <=50 ms
 while waiting for the child, closes the Job, waits for termination, restores
-security descriptors, and deletes the AppContainer profile. The JS caller should
+security descriptors, and deletes the AppContainer profile. The caller should
 wait for this cleanup; it can kill the launcher only as a last-resort fallback.
 The timeout starts before sandbox setup, and the remaining budget is checked
 before the suspended child is resumed. Preparation/cleanup perform synchronous
@@ -98,6 +101,9 @@ From this directory on macOS/Linux, use fresh output paths:
   GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o "$out/windows-runner.exe" .
   GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go test -c -o "$out/integration.test.exe" ./tests
   GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...
+
+For ARM64, use GOARCH=arm64 in all three commands and a separate fresh output
+directory. The launcher and test EXE must match the plugin worker architecture.
 
 These are cross-compilation/static checks, NOT a Windows sandbox execution test.
 
