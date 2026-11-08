@@ -1,10 +1,10 @@
 // Complete native platform packages; no runtime downloads or user-installed dependencies.
-import { chmod, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { zipSync } from 'fflate'
 import path from 'node:path'
-import { DARWIN_FILES, WINDOWS_FILES, WINDOWS_FFMPEG_FILES, WINDOWS_SOURCES, checkDigest, checkWindowsPE, inspectWindowsAudio, packageTarget, sha256 } from './runtime-assets.mjs'
+import { DARWIN_FILES, DARWIN_FFMPEG_FILES, WINDOWS_FILES, WINDOWS_FFMPEG_FILES, WINDOWS_SOURCES, checkDigest, checkWindowsPE, inspectWindowsAudio, inspectDarwinAudio, packageTarget, sha256 } from './runtime-assets.mjs'
 import { checkPackageLayout, copyPackageSource } from './package-layout.mjs'
 import { buildNative, goCommand } from './build-native.mjs'
 
@@ -22,6 +22,14 @@ for (const [name, hash] of Object.entries(expected)) {
   checkDigest(bytes, hash, name)
   if (target.windows && /\.(?:exe|dll|node)$/.test(name)) checkWindowsPE(bytes, name)
   if (target.windows && name === 'ffmpeg.exe') inspectWindowsAudio(bytes)
+}
+const macAudio = process.env.QISHUI_FFMPEG_DIR
+if (!target.windows) {
+  if (!macAudio || !path.isAbsolute(macAudio)) throw new Error('Build requires QISHUI_FFMPEG_DIR with the pinned macOS audio-only FFmpeg build.')
+  for (const [name, hash] of Object.entries(DARWIN_FFMPEG_FILES)) checkDigest(await readFile(path.join(macAudio, name)), hash, name)
+  inspectDarwinAudio(await readFile(path.join(macAudio, 'ffmpeg')))
+  const signature = spawnSync('/usr/bin/codesign', ['--verify', '--strict', path.join(macAudio, 'ffmpeg')], { encoding: 'utf8' })
+  if (signature.error || signature.status !== 0) throw new Error('macOS FFmpeg signature verification failed')
 }
 const manifest = JSON.parse(await readFile(path.join(root, 'plugin.json'), 'utf8'))
 await mkdir(path.join(root, 'dist'), { recursive: true })
@@ -50,10 +58,7 @@ try {
     await cp(path.join(goCommand(runnerModule, target, ['list', '-m', '-f', '{{.Dir}}', 'golang.org/x/sys']), 'LICENSE'), path.join(native, 'X-SYS-LICENSE'))
   } else {
     for (const name of Object.keys(DARWIN_FILES)) await cp(path.join(inputs, name), path.join(native, name))
-    const converter = path.join(native, 'audio-convert')
-    const build = spawnSync('/usr/bin/clang', ['-O2', '-framework', 'AudioToolbox', '-framework', 'CoreFoundation', path.join(root, 'helper/audio-convert.c'), '-o', converter], { stdio: 'inherit', timeout: 60000 })
-    if (build.error || build.status !== 0) throw new Error('Audio converter build failed; install Xcode Command Line Tools')
-    await chmod(converter, 0o755)
+    for (const name of Object.keys(DARWIN_FFMPEG_FILES)) await cp(path.join(macAudio, name), path.join(native, name))
   }
   async function archive(suffix) {
     const entries = Object.create(null)

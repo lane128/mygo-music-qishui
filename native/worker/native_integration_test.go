@@ -89,24 +89,8 @@ func TestNativeDecode(t *testing.T) {
 		t.Fatal("isolated decoder accepted malformed input")
 	}
 }
-func TestNativeConvertFixtures(t *testing.T) { runNativeConvertFixtures(t, nativeRoot(t), "") }
-func TestNativeBaselineConverter(t *testing.T) {
+func TestNativeConvertFixtures(t *testing.T) {
 	root := nativeRoot(t)
-	baseline := os.Getenv("QISHUI_BASELINE_CONVERTER")
-	if baseline == "" || runtime.GOOS != "darwin" {
-		t.Skip("set QISHUI_BASELINE_CONVERTER for developer baseline equivalence")
-	}
-	runNativeConvertFixtures(t, root, baseline)
-}
-func runNativeConvertFixtures(t *testing.T, root, baseline string) {
-	baselineRoot := ""
-	if baseline != "" && runtime.GOOS == "darwin" {
-		baselineRoot = t.TempDir()
-		native := filepath.Join(baselineRoot, "runtime", "native")
-		if os.MkdirAll(native, 0700) != nil {
-			t.Fatal("baseline converter scratch unavailable")
-		}
-	}
 	cases := []struct {
 		name                     string
 		rate, channels, min, max int
@@ -114,6 +98,7 @@ func runNativeConvertFixtures(t *testing.T, root, baseline string) {
 		{"aac-lc.m4a", 48000, 1, 4000, 7000}, {"aac-lc.aac", 44100, 2, 44100, 53000},
 		{"aac-he.m4a", 44100, 2, 44100, 53000}, {"aac-he.aac", 44100, 2, 44100, 53000},
 		{"aac-hev2.m4a", 44100, 2, 44100, 53000}, {"aac-hev2.aac", 44100, 2, 44100, 53000},
+		{"aac-fullscale.m4a", 44100, 2, 44100, 53000}, {"aac-transient.m4a", 44100, 2, 44100, 53000},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -141,46 +126,27 @@ func runNativeConvertFixtures(t *testing.T, root, baseline string) {
 			if len(reference) == 0 || len(actual) != len(reference) {
 				t.Fatal("conversion changed decoded sample count")
 			}
-			width, threshold := 3, int64(4)
-			if runtime.GOOS == "windows" {
-				width, threshold = 4, 256
-			} else if c.name == "aac-he.m4a" || c.name == "aac-he.aac" {
-				// Measured against the unchanged P1 converter through this exact
-				// isolated launch: baseline/current PCM differ by <=1, while both
-				// HE references can differ by 8 units. Other Mac fixtures retain 4.
-				threshold = 8
+			// Both platforms use FFmpeg. One 24-bit step is 256 in signed 32-bit PCM.
+			width, threshold := 4, int64(256)
+			if runtime.GOOS == "darwin" {
+				if trim := m4aGapless(input); trim != nil && uint64(frames)*uint64(trim.timescale) != trim.samples*uint64(rate) {
+					t.Fatal("gapless conversion changed valid sample count")
+				}
 			}
 			maxDifference, nonzero := comparePCM(t, reference, actual, width)
 			t.Logf("frames=%d referenceMaximumDifference=%d", frames, maxDifference)
-			if baselineRoot != "" {
-				// Even byte-identical AudioToolbox executables at different paths can
-				// select slightly different HE rounding paths. Compare both binary
-				// versions at the same private executable path and isolation policy.
-				staged := filepath.Join(baselineRoot, "runtime", "native", "audio-convert")
-				launch := func(source string) []byte {
-					if e := os.Remove(staged); e != nil && !os.IsNotExist(e) {
-						t.Fatal("comparison staging failed")
+			if c.name == "aac-fullscale.m4a" {
+				positivePeaks := 0
+				for i := 0; i < len(reference); i += 4 {
+					if int32(binary.LittleEndian.Uint32(reference[i:])) >= 2147483392 {
+						positivePeaks++
+						if int32(binary.LittleEndian.Uint32(actual[i:])) < 0 {
+							t.Fatal("positive peak reversed polarity")
+						}
 					}
-					if copyPrivate(source, staged) != nil {
-						t.Fatal("comparison converter unavailable")
-					}
-					ctx, cancel := context.WithTimeout(context.Background(), 24*time.Second)
-					data, e := convertAAC(ctx, baselineRoot, input)
-					cancel()
-					if e != nil {
-						t.Fatal("isolated comparison conversion failed")
-					}
-					return data
 				}
-				stagedCurrentPCM := nativeReferencePCM(t, root, launch(filepath.Join(root, "runtime", "native", "audio-convert")), "staged-current.flac")
-				baselinePCM := nativeReferencePCM(t, root, launch(baseline), "baseline.flac")
-				delta, _ := comparePCM(t, baselinePCM, stagedCurrentPCM, width)
-				baselineMax, _ := comparePCM(t, reference, baselinePCM, width)
-				stagedCurrentMax, _ := comparePCM(t, reference, stagedCurrentPCM, width)
-				pathDelta, _ := comparePCM(t, actual, stagedCurrentPCM, width)
-				t.Logf("baselineCurrentMaximumDifference=%d baselineReferenceMaximumDifference=%d stagedCurrentReferenceMaximumDifference=%d installedStagedCurrentMaximumDifference=%d", delta, baselineMax, stagedCurrentMax, pathDelta)
-				if delta > 1 || baselineMax > threshold || stagedCurrentMax > threshold || stagedCurrentMax > 4 && baselineMax <= 4 {
-					t.Fatal("baseline precision equivalence failed")
+				if positivePeaks == 0 {
+					t.Fatal("full-scale fixture did not exercise positive saturation")
 				}
 			}
 			if maxDifference > threshold {
@@ -252,34 +218,24 @@ func nativeReferencePCM(t *testing.T, plugin string, data []byte, name string) [
 		}
 		return out
 	}
-	output := filepath.Join(scratch, "reference.wav")
-	// Only this independent reference over bundled generated test fixtures uses
-	// ordinary afconvert, matching the established P1 comparison. Production
-	// convertAAC above always remains isolated; reference rounding tolerances
-	// were checked against the unchanged baseline through the same isolation.
-	cmd := exec.CommandContext(ctx, "/usr/bin/afconvert", "-f", "WAVE", "-d", "LEI24", input, output)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "TMPDIR=" + scratch, "LANG=en_US.UTF-8"}
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	if cmd.Run() != nil {
-		t.Fatal("reference PCM decode failed")
+	exe := filepath.Join(plugin, "runtime", "native", "ffmpeg")
+	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-protocol_whitelist", "file,pipe", "-i", input, "-map", "0:a:0", "-c:a", "pcm_s32le", "-f", "s32le", "pipe:1"}
+	if trim := m4aGapless(data); trim != nil {
+		args = gaplessArgs(args, trim)
 	}
-	wave, e := os.ReadFile(output)
+	home, e := os.UserHomeDir()
 	if e != nil {
-		t.Fatal("reference PCM output unavailable")
+		t.Fatal("reference home unavailable")
 	}
-	for p := 12; p+8 <= len(wave); {
-		size := int(binary.LittleEndian.Uint32(wave[p+4 : p+8]))
-		if size > len(wave)-p-8 {
-			break
-		}
-		if string(wave[p:p+4]) == "data" {
-			return wave[p+8 : p+8+size]
-		}
-		p += 8 + size + size%2
+	policy, e := sandboxPolicy(scratch, []string{exe, input}, home)
+	if e != nil {
+		t.Fatal("reference sandbox unavailable")
 	}
-	t.Fatal("reference PCM framing invalid")
-	return nil
+	out, e := runIsolated(ctx, "/usr/bin/sandbox-exec", append([]string{"-p", policy, exe}, args...), nil, 2*1024*1024, scratch, false)
+	if e != nil {
+		t.Fatal("isolated reference PCM decode failed")
+	}
+	return out
 }
 func processID() string { // Kept fixed-format; never appears in diagnostics.
 	b, _ := json.Marshal(os.Getpid())

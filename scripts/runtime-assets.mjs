@@ -17,6 +17,13 @@ export const WINDOWS_FILES = {
   'metasecml.dll': '53f322a7731cf64e6187d2fde1bb07558c2ab0a64fa6db0ef7c95d618ea9a226',
   ...WINDOWS_FFMPEG_FILES,
 }
+export const DARWIN_FFMPEG_FILES = {
+  'ffmpeg': 'e0a1aee9fccf020032908ad3b22ba6b0cbc87976274d044b762a030b6f9752b0',
+  'FFMPEG-LICENSE': '8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903',
+  'FFMPEG-README.txt': 'a3369310d14a860251f047d80fe3198edb93572a9cd9085932f0c14b9e3ea4be',
+  'FFMPEG-BUILD.json': 'a1cd4e9e768cd2691af1c1279886391a7acb06a025d950127b1a1c16248df4d8',
+  'FFMPEG-SOURCE.tar.xz': '1bab41925ca9a4cf5c8fe4da285b5966e81eeb041b951522c7ae82ce5993df6a',
+}
 export const DARWIN_FILES = {
   'bdms.node': 'bb8858680af4360d4da706caccfbbc73cfdf3f8cafebcb4f521ca7b782cb4bb2',
   'libMetaSecML.dylib': '078db186b335c8400f5b8bb48762ef8ac36ff055f60576775a4334587bba760c',
@@ -73,6 +80,25 @@ export function inspectWindowsAudio(data) {
   }
   if (!terminated || !imports.includes('kernel32.dll')) throw new Error('Incomplete audio DLL imports')
   return { timestamp: data.readUInt32LE(pe + 8), dllCharacteristics, relocationsBytes, imports: imports.sort() }
+}
+// The bundled Mac executable must support the same macOS 12 floor as the signer.
+export function inspectDarwinAudio(data) {
+  if (data.length < 32 || data.readUInt32LE(0) !== 0xfeedfacf || data.readUInt32LE(4) !== 0x0100000c || data.readUInt32LE(12) !== 2) throw new Error('Expected macOS arm64 audio executable')
+  const count = data.readUInt32LE(16), bytes = data.readUInt32LE(20)
+  if (!count || count > 4096 || bytes > data.length - 32) throw new Error('Invalid audio Mach-O commands')
+  let p = 32, minimumMacOS
+  for (let i = 0; i < count; i++) {
+    if (p + 8 > 32 + bytes) throw new Error('Invalid audio Mach-O command')
+    const command = data.readUInt32LE(p), size = data.readUInt32LE(p + 4)
+    if (size < 8 || size > 32 + bytes - p) throw new Error('Invalid audio Mach-O command')
+    if (command === 0x32) {
+      if (size < 24 || data.readUInt32LE(p + 8) !== 1 || minimumMacOS !== undefined) throw new Error('Invalid audio macOS build version')
+      minimumMacOS = data.readUInt32LE(p + 12)
+    }
+    p += size
+  }
+  if (p !== 32 + bytes || minimumMacOS === undefined || minimumMacOS < 0x000b0000 || minimumMacOS > 0x000c0000) throw new Error('Audio executable must support macOS 12')
+  return { minimumMacOS }
 }
 export function packageTarget(value = `${process.platform}-${process.arch}`) {
   if (value === 'darwin-arm64') return { platform: 'darwin', arch: 'arm64', windows: false }

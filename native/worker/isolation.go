@@ -240,10 +240,7 @@ func isolatedNative(ctx context.Context, plugin, operation string, input []byte,
 		executable, e = regular(filepath.Join(plugin, "bin", program))
 		args = []string{"--decode"}
 	case "convert":
-		program := "audio-convert"
-		if windows {
-			program = "ffmpeg.exe"
-		}
+		program := "ffmpeg" + ext
 		executable, e = regular(filepath.Join(native, program))
 	default:
 		return nil, errSetup
@@ -282,12 +279,14 @@ func isolatedNative(ctx context.Context, plugin, operation string, input []byte,
 			return nil, errUnavailable
 		}
 		readable = append(readable, inputPath)
+		args = aacConversionArgs(inputPath, outputPath)
+		if !windows {
+			if trim := m4aGapless(input); trim != nil {
+				args = gaplessArgs(args, trim)
+			}
+		}
 		input = nil
 		limit = 4096
-		args = []string{inputPath, outputPath}
-		if windows {
-			args = aacConversionArgs(inputPath, outputPath)
-		}
 	}
 	command := "/usr/bin/sandbox-exec"
 	if windows {

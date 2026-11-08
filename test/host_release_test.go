@@ -13,6 +13,27 @@ import (
 	"testing"
 )
 
+func qishuiReleaseAudioFiles() []string {
+	if runtime.GOOS == "windows" {
+		return []string{"runtime/native/metasecml.dll", "runtime/native/ffmpeg.exe", "runtime/native/windows-runner.exe", "runtime/native/FFMPEG-LICENSE", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE"}
+	}
+	return []string{"runtime/native/libMetaSecML.dylib", "runtime/native/ffmpeg", "runtime/native/FFMPEG-LICENSE", "runtime/native/FFMPEG-README.txt", "runtime/native/FFMPEG-BUILD.json", "runtime/native/FFMPEG-SOURCE.tar.xz"}
+}
+
+// Exercise the release's actual runtime requirements before publishing anything.
+func TestQishuiReleaseRuntimeLayout(t *testing.T) {
+	root := os.Getenv("QISHUI_PLUGIN_DIR")
+	if root == "" {
+		t.Skip("QISHUI_PLUGIN_DIR is not set")
+	}
+	for _, name := range qishuiReleaseAudioFiles() {
+		info, err := os.Stat(filepath.Join(root, name))
+		if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			t.Fatalf("missing required release audio asset: %s", name)
+		}
+	}
+}
+
 // The anonymous public update path must select, verify and install the complete ZIP without touching user data.
 func TestQishuiPublishedRelease(t *testing.T) {
 	if os.Getenv("QISHUI_CHECK_RELEASE") != "1" {
@@ -60,10 +81,9 @@ func TestQishuiPublishedRelease(t *testing.T) {
 	}
 	installed := filepath.Join(dir, "qishui-app-login")
 	worker := filepath.Join("bin", "qishui-helper-"+runtime.GOOS+"-"+runtime.GOARCH)
-	native := []string{"runtime/native/libMetaSecML.dylib", "runtime/native/audio-convert"}
+	native := qishuiReleaseAudioFiles()
 	if runtime.GOOS == "windows" {
 		worker += ".exe"
-		native = []string{"runtime/native/metasecml.dll", "runtime/native/ffmpeg.exe", "runtime/native/windows-runner.exe", "runtime/native/FFMPEG-LICENSE", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE"}
 	}
 	signer := "runtime/native/qishui-sign"
 	if runtime.GOOS == "windows" {

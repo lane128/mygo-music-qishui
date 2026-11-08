@@ -97,7 +97,15 @@ npm run test:native
 
 ### 构建安装包
 
-macOS arm64 需要 Xcode 命令行工具。设置 `QISHUI_NATIVE_DIR` 指向已核验的官方 3.7.0 原生组件目录，再运行 `npm run package`。macOS AAC 转换使用系统 AudioToolbox。
+macOS arm64 需要 Xcode 命令行工具和 `xz`。先用固定源码构建随包附带的精简 FFmpeg（源码也可使用已有包中的 `FFMPEG-SOURCE.tar.xz` 离线重建）：
+
+```sh
+npm run build:ffmpeg -- /absolute/new/macos-audio /absolute/FFMPEG-SOURCE.tar.xz --native
+```
+
+设置 `QISHUI_NATIVE_DIR` 指向已核验的官方 3.7.0 原生组件目录，`QISHUI_FFMPEG_DIR` 指向上述 macOS 音频构建目录，再运行 `npm run package`。构建器校验组件哈希和 FFmpeg 可执行文件签名。
+
+当前源码包含**尚未发布的 macOS FFmpeg 测试改动**：AAC 转为 24 位 FLAC，保留源采样率、声道与来源音质等级，避免旧 AudioToolbox 路径的满幅样本溢出。对于无编辑列表且具有完整、一致 `iTunSMPB` 信息的单音轨 M4A，按容器中的编码延迟和有效样本数裁剪首尾填充；其他文件采用 FFmpeg 的默认时序，不按歌曲标称时长猜测裁剪。此改动仍需真实歌曲试听，不代表 v1.0.9 正式资产已更新。
 
 Windows x64 交叉打包固定使用 macOS arm64、Xcode 命令行工具、`xz` 和 Zig 0.15.2。按 `scripts/ffmpeg-config.mjs` 下载固定源码和工具链归档，运行：
 

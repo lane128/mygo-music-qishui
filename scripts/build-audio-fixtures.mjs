@@ -2,6 +2,7 @@
 import { mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
+import { stressWave } from '../test/fixtures/audio-signals.mjs'
 const output = process.argv[2]
 if (process.platform !== 'darwin' || !output || !path.isAbsolute(output)) throw new Error('Use macOS: build-audio-fixtures.mjs <new absolute directory>')
 await mkdir(output, { recursive: true })
@@ -25,4 +26,11 @@ for (const [profile, codec, bitrate] of [['lc', 'aac', 128000], ['he', 'aach', 4
   }
 }
 await rm(source)
+for (const kind of ['fullscale', 'transient']) {
+  const input = path.join(output, kind + '.wav')
+  await writeFile(input, stressWave(kind), { flag: 'wx' })
+  const result = spawnSync('/usr/bin/afconvert', ['-f', 'm4af', '-d', 'aac', '-b', '256000', input, path.join(output, `aac-${kind}.m4a`)], { stdio: 'inherit', timeout: 20000 })
+  if (result.error || result.status !== 0) throw new Error('Peak regression fixture encoding failed')
+  await rm(input)
+}
 console.log(output)

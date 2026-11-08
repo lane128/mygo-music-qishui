@@ -204,51 +204,13 @@ test('bundled official signer emits only the two allowed signature headers', { s
   assert.ok(Object.values(signed).every(value => typeof value === 'string' && value && !/[\r\n\0]/.test(value)))
 })
 
-function command(binary, args) {
-  const result = spawnSync(binary, args, { timeout: 20000, env: { PATH: '/usr/bin:/bin' } })
-  assert.equal(result.status, 0, `${binary} failed: ${result.stderr?.toString()}`)
-}
-function wavePCM(data) {
-  for (let p = 12; p + 8 <= data.length;) {
-    const size = data.readUInt32LE(p + 4)
-    if (data.toString('ascii', p, p + 4) === 'data') return data.subarray(p + 8, p + 8 + size)
-    p += 8 + size + size % 2
-  }
-  throw new Error('missing PCM')
-}
-
-// AudioToolbox conversion preserves frame count and at least 22-bit sample precision;
-// separate AAC decode passes can differ by a few least-significant 24-bit units.
-test('compiled converter preserves AAC frames and sample precision and rejects malformed input', { skip: process.platform !== 'darwin' }, async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'qishui-converter-test-'))
-  try {
-    const converter = path.join(root, 'convert')
-    command('/usr/bin/clang', ['-O2', '-framework', 'AudioToolbox', '-framework', 'CoreFoundation', fileURLToPath(new URL('../helper/audio-convert.c', import.meta.url)), '-o', converter])
-    const frames = 4800, wave = Buffer.alloc(44 + frames * 2)
-    wave.write('RIFF'); wave.writeUInt32LE(wave.length - 8, 4); wave.write('WAVEfmt ', 8); wave.writeUInt32LE(16, 16); wave.writeUInt16LE(1, 20); wave.writeUInt16LE(1, 22); wave.writeUInt32LE(48000, 24); wave.writeUInt32LE(96000, 28); wave.writeUInt16LE(2, 32); wave.writeUInt16LE(16, 34); wave.write('data', 36); wave.writeUInt32LE(frames * 2, 40)
-    for (let i = 0; i < frames; i++) wave.writeInt16LE(Math.round(Math.sin(i * Math.PI * 880 / 48000) * 12000), 44 + i * 2)
-    const source = path.join(root, 'source.wav'), input = path.join(root, 'input.m4a'), output = path.join(root, 'output.flac')
-    await writeFile(source, wave)
-    command('/usr/bin/afconvert', ['-f', 'm4af', '-d', 'aac', '-b', '128000', source, input])
-    command(converter, [input, output])
-    assert.equal((await readFile(output)).toString('ascii', 0, 4), 'fLaC')
-    const expected = path.join(root, 'expected.wav'), actual = path.join(root, 'actual.wav')
-    command('/usr/bin/afconvert', ['-f', 'WAVE', '-d', 'LEI24', input, expected])
-    command('/usr/bin/afconvert', ['-f', 'WAVE', '-d', 'LEI24', output, actual])
-    const actualPCM = wavePCM(await readFile(actual)), expectedPCM = wavePCM(await readFile(expected))
-    assert.equal(actualPCM.length, expectedPCM.length)
-    let maximumDifference = 0
-    for (let pos = 0; pos < actualPCM.length; pos += 3) maximumDifference = Math.max(maximumDifference, Math.abs(actualPCM.readIntLE(pos, 3) - expectedPCM.readIntLE(pos, 3)))
-    assert.ok(maximumDifference <= 4, `PCM changed by ${maximumDifference} quantization units`)
-    // Packaged runtime detection also exercises the sandbox/file-cleanup wrapper.
-    const { access } = await import('node:fs/promises')
-    const packaged = await access(new URL('../runtime/native/audio-convert', import.meta.url)).then(() => true, () => false)
-    if (packaged) {
-      const bundled = await convertAAC(await readFile(input))
-      assert.equal(bundled.toString('ascii', 0, 4), 'fLaC')
-      assert.ok(bundled.length > 42)
-    }
-    await writeFile(input, 'not audio')
-    assert.notEqual(spawnSync(converter, [input, output], { timeout: 5000 }).status, 0)
-  } finally { await rm(root, { recursive: true, force: true }) }
+// The independent packaged Go tests check PCM precision and full-scale peaks.
+// This additionally checks the development adapter's sandbox invocation contract.
+test('bundled macOS FFmpeg converts AAC and rejects malformed input', { skip: process.platform !== 'darwin' || !process.env.QISHUI_TEST_NATIVE }, async () => {
+  const result = await convertAAC(await readFile(new URL('./fixtures/aac-fullscale.m4a', import.meta.url)))
+  assert.equal(result.toString('ascii', 0, 4), 'fLaC')
+  const info = result.readBigUInt64BE(18)
+  assert.equal(Number(info >> 44n), 44100)
+  assert.equal(Number(info & 0xfffffffffn), 44100)
+  await assert.rejects(convertAAC(Buffer.from('not audio')), { kind: 'unavailable' })
 })

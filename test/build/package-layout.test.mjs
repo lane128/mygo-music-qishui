@@ -24,7 +24,7 @@ test('runtime staging retains native source and validation adds independent test
   try {
     await copyPackageSource(root, stage)
     for (const name of ['assets', 'test', 'native/windows-runner/tests', 'scripts/verify-windows.cmd', 'helper/worker.mjs', 'helper/resource.cjs', 'scripts/prepare-node.mjs', 'native/signer/validate.mjs', 'native/signer/signer.test.cpp']) await assert.rejects(access(path.join(stage, name)))
-    for (const name of ['index.js', 'helper/catalog-core.mjs', 'helper/audio-convert.c', 'src/plugin.mjs', 'LICENSE', 'NOTICE.md', 'native/worker/go.mod', 'native/signer/signer.cpp', 'native/signer/include/NODE-LICENSE', 'native/windows-runner/main_windows.go', 'native/windows-runner/go.sum', 'scripts/package.mjs', 'scripts/build-native.mjs', 'scripts/build-ffmpeg.mjs']) await access(path.join(stage, name))
+    for (const name of ['index.js', 'helper/catalog-core.mjs', 'helper/m4a-gapless.mjs', 'src/plugin.mjs', 'LICENSE', 'NOTICE.md', 'native/worker/go.mod', 'native/signer/signer.cpp', 'native/signer/include/NODE-LICENSE', 'native/windows-runner/main_windows.go', 'native/windows-runner/go.sum', 'scripts/package.mjs', 'scripts/build-native.mjs', 'scripts/build-ffmpeg.mjs']) await access(path.join(stage, name))
     const entry = await readFile(path.join(stage, 'index.js')), signer = await readFile(path.join(stage, 'native/signer/signer.cpp'))
     await copyPackageSource(root, stage, { validation: true })
     for (const name of ['test/fixtures/aac-lc.m4a', 'native/windows-runner/tests/integration_windows_test.go', 'scripts/verify-windows.cmd', 'scripts/verify-windows.mjs', 'native/signer/signer.test.cpp']) await access(path.join(stage, name))

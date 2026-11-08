@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { checkDigest, checkWindowsPE, inspectWindowsAudio, packageTarget } from '../../scripts/runtime-assets.mjs'
+import { checkDigest, checkWindowsPE, inspectWindowsAudio, inspectDarwinAudio, packageTarget } from '../../scripts/runtime-assets.mjs'
 import { extractSelected, prepareWindows } from '../../scripts/prepare-windows.mjs'
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
@@ -58,6 +58,20 @@ test('actual audio PE guard rejects removed hardening and injected external DLL 
   const relocation = Buffer.from(original)
   relocation.writeUInt32LE(0, offset + 112 + 5 * 8 + 4)
   assert.throws(() => inspectWindowsAudio(relocation), /relocation/)
+})
+
+test('macOS audio guard rejects newer OS requirements and wrong architecture', () => {
+  const executable = Buffer.alloc(56)
+  executable.writeUInt32LE(0xfeedfacf, 0); executable.writeUInt32LE(0x0100000c, 4); executable.writeUInt32LE(2, 12)
+  executable.writeUInt32LE(1, 16); executable.writeUInt32LE(24, 20)
+  executable.writeUInt32LE(0x32, 32); executable.writeUInt32LE(24, 36); executable.writeUInt32LE(1, 40); executable.writeUInt32LE(0x000c0000, 44)
+  assert.equal(inspectDarwinAudio(executable).minimumMacOS, 0x000c0000)
+  executable.writeUInt32LE(0x001b0000, 44)
+  assert.throws(() => inspectDarwinAudio(executable), /macOS 12/)
+  executable.writeUInt32LE(0x000c0000, 44); executable.writeUInt32LE(0x01000007, 4)
+  assert.throws(() => inspectDarwinAudio(executable), /arm64/)
+  executable.writeUInt32LE(0x0100000c, 4); executable.writeUInt32LE(0xffffffff, 36)
+  assert.throws(() => inspectDarwinAudio(executable), /command/)
 })
 
 // Authenticate archives before parsing, so even malformed ZIP64/TAR input does

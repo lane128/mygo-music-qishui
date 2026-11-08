@@ -7,6 +7,8 @@ import path from 'node:path'
 import { pluginRoot } from './runtime.mjs'
 import { error } from './protocol.mjs'
 import { createWindowsNative } from './windows-native.mjs'
+import { aacConversionArgs } from './ffmpeg-args.mjs'
+import { m4aGapless } from './m4a-gapless.mjs'
 
 const windows = createWindowsNative()
 
@@ -136,11 +138,11 @@ export async function convertAAC(data, { signal } = {}) {
   if (process.platform === 'win32') return windows.convertAAC(data, { signal })
   if (!Buffer.isBuffer(data) || data.length > MAX_AUDIO) throw error('unavailable')
   return isolated(async root => {
-    const converter = await regular(path.join(pluginRoot, 'runtime/native/audio-convert'))
+    const converter = await regular(path.join(pluginRoot, 'runtime/native/ffmpeg'))
     const input = path.join(root, 'input.m4a'), output = path.join(root, 'output.flac')
     await writeFile(input, data, { mode: 0o600 })
     // The converter can read its own private input but never the account home.
-    await run('/usr/bin/sandbox-exec', ['-p', sandboxPolicy(root, [converter, input]), converter, input, output], {
+    await run('/usr/bin/sandbox-exec', ['-p', sandboxPolicy(root, [converter, input]), converter, ...aacConversionArgs(input, output, m4aGapless(data))], {
       input: Buffer.alloc(0), limit: 4096, root, signal,
     })
     const info = await stat(output)

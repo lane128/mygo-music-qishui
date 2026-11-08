@@ -1,4 +1,4 @@
-// Build-only: macOS arm64 -> Windows x64, with a native codec-check build option.
+// Build-only: pinned audio-only FFmpeg for macOS arm64 or Windows x64.
 // No global installation, network access, or changes to supplied archives.
 import { spawnSync } from 'node:child_process'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
-import { checkDigest, inspectWindowsAudio, sha256 } from './runtime-assets.mjs'
+import { checkDigest, inspectWindowsAudio, inspectDarwinAudio, sha256 } from './runtime-assets.mjs'
 import { FFMPEG_SOURCE, FFMPEG_SOURCE_BUNDLE, ZIG_TOOLCHAIN, FFMPEG_FLAGS } from './ffmpeg-config.mjs'
 
 export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, native = false } = {}) {
@@ -37,7 +37,10 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
       PATH: wrappers + path.delimiter + process.env.PATH, QISHUI_FFMPEG_WORK: work }
     let targetFlags, zigRoot
     if (native) {
-      targetFlags = ['--disable-debug', '--cc=clang', '--extra-ldflags=-Wl,-dead_strip']
+      env.MACOSX_DEPLOYMENT_TARGET = '12.0'
+      await writeFile(path.join(wrappers, 'native-clang'),
+        '#!/bin/sh\nexec /usr/bin/clang -mmacosx-version-min=12.0 -ffile-prefix-map="$QISHUI_FFMPEG_WORK=/build" "$@"\n', { mode: 0o755 })
+      targetFlags = ['--disable-debug', '--cc=native-clang', '--extra-ldflags=-Wl,-dead_strip']
     } else {
       command('/usr/bin/tar', ['-xf', path.resolve(toolchainArchive), '-C', tools])
       zigRoot = path.join(tools, 'zig-' + ZIG_TOOLCHAIN.host + '-' + ZIG_TOOLCHAIN.version)
@@ -61,7 +64,8 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
     const executable = native ? 'ffmpeg' : 'ffmpeg.exe'
     await cp(path.join(build, executable), path.join(output, executable))
     const binary = await readFile(path.join(output, executable))
-    if (!native) inspectWindowsAudio(binary)
+    if (native) inspectDarwinAudio(binary)
+    else inspectWindowsAudio(binary)
     await cp(path.join(tree, 'COPYING.GPLv3'), path.join(output, 'FFMPEG-LICENSE'))
     // Ship the full unmodified corresponding source, compressed without timestamps.
     const sourceTar = bundled ? command('xz', ['-dc', path.resolve(sourceArchive)], { capture: true }) : gunzipSync(source, { maxOutputLength: 256 * 1024 * 1024 })
@@ -88,8 +92,8 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
       await writeFile(path.join(output, 'WINDOWS-CRT-SOURCE.tar.xz'), crt)
       crtSourceBundleSha256 = sha256(crt)
     }
-    const metadata = { source: FFMPEG_SOURCE, toolchain: native ? { compiler: 'Apple clang', validationOnly: true } : ZIG_TOOLCHAIN,
-      target: native ? 'darwin-arm64-validation' : 'windows-amd64', flags,
+    const metadata = { source: FFMPEG_SOURCE, toolchain: native ? { compiler: 'Apple clang', minimumMacOS: '12.0' } : ZIG_TOOLCHAIN,
+      target: native ? ['darwin', 'arm64'].join('-') : 'windows-amd64', flags,
       generatedSourceFile: { VERSION: FFMPEG_SOURCE.version + '\n' },
       sourceTarSha256: sha256(sourceTar), sourceBundleSha256: sha256(compressed), crtSourceBundleSha256, executableSha256: sha256(binary) }
     await writeFile(path.join(output, 'FFMPEG-BUILD.json'), JSON.stringify(metadata, null, 2) + '\n')
@@ -102,7 +106,7 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
       'VERSION is generated for release identification; codec source is unchanged.\n' +
       'Only local file/pipe protocols, AAC/FLAC/PCM audio and FLAC/PCM encoding.\n' +
       'No network, video, device support, external codec libraries or lossy encoding.\n' +
-      'Windows CRT notices and source: MINGW-LICENSE, ZIG-LICENSE, WINDOWS-CRT-SOURCE.tar.xz.\n')
+      (native ? '' : 'Windows CRT notices and source: MINGW-LICENSE, ZIG-LICENSE, WINDOWS-CRT-SOURCE.tar.xz.\n'))
     return metadata
   } catch (cause) {
     await cp(path.join(work, 'build/ffbuild/config.log'), path.join(output, 'FFMPEG-config-failure.log')).catch(() => {})
@@ -112,6 +116,7 @@ export async function buildFFmpeg(output, { sourceArchive, toolchainArchive, nat
 const entry = process.argv[1] && await realpath(process.argv[1]).catch(() => null)
 if (entry && import.meta.url === pathToFileURL(entry).href) {
   const [output, sourceArchive, toolchainArchive, mode] = process.argv.slice(2)
-  if (mode && mode !== '--native') throw new Error('Unknown build mode')
-  console.log(JSON.stringify(await buildFFmpeg(output, { sourceArchive, toolchainArchive, native: mode === '--native' }), null, 2))
+  if (process.argv.length > 6 || mode && mode !== '--native' || toolchainArchive === '--native' && mode) throw new Error('Unknown build mode')
+  const native = toolchainArchive === '--native' || mode === '--native'
+  console.log(JSON.stringify(await buildFFmpeg(output, { sourceArchive, toolchainArchive: native ? undefined : toolchainArchive, native }), null, 2))
 }

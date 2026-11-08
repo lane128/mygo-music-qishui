@@ -9,7 +9,7 @@ export const runtimeSource = [
   'helper/catalog-core.mjs', 'helper/protocol.mjs', 'helper/client-profile.mjs', 'helper/json-body.mjs',
   'helper/avatar.mjs', 'helper/comments.mjs', 'helper/library-actions.mjs',
   'helper/discovery.mjs', 'helper/history.mjs', 'helper/scene-pages.mjs', 'helper/home-page.mjs', 'helper/exploration.mjs',
-  'helper/audio-convert.c', 'helper/ffmpeg-args.mjs',
+  'helper/m4a-gapless.mjs', 'helper/ffmpeg-args.mjs',
   'scripts/build.mjs', 'scripts/package.mjs', 'scripts/package-layout.mjs', 'scripts/build-native.mjs',
   'scripts/runtime-assets.mjs', 'scripts/prepare-windows.mjs', 'scripts/build-ffmpeg.mjs', 'scripts/ffmpeg-config.mjs',
   'native/worker', 'native/signer',
