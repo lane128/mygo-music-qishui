@@ -20,6 +20,7 @@
 
 ## 验证与验收
 
+- MyGO 0.1.24（`552e25c`，MyGo 0.9.0）与最低版本 0.1.20（`bc09215`，MyGo `v0.8.1-0.20261106182104-487bc3496d89`）：Runtime、NetworkOnlyLogin、ZIP 安装、edit-list 满幅 AAC-LC 及文字附轨四种布局均通过，两版结果一致。真实音频检查因私有清单已清理而跳过，仍待补跑；证据见 `dist/host-0.1.24-regression/report.json` 与 `dist/host-0.1.20-regression/report.json`。
 - M4A 接入后的源码 `npm test`：296 项 JavaScript 测试，284 通过、12 项依赖可选资产 / 执行环境而跳过、0 失败；Go 单元及 `npm run test:native` 全模块 race 通过。另以四个平台本地验证包完成布局、源码一致性、组件哈希和两版宿主安装检查；macOS arm64 包内原生与适配器检查通过，无运行时 FFmpeg。
 - MyGO 0.1.20 与 0.1.22：真实 JS 沙箱 Runtime / NetworkOnlyLogin 均通过，覆盖目录 / 绑定用户两类歌手的关注状态更新、专辑收藏与列表、歌曲分享 URL、歌单移动调用、账号主页，以及逐字时间和中文翻译透传。
 - MyGO 0.1.22：已有关注、专辑收藏、歌单移动 / 回退和歌曲菜单复制链接交互测试通过。

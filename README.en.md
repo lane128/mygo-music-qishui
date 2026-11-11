@@ -16,6 +16,7 @@ If you find this plugin useful, consider giving [the project](https://github.com
 | --- | --- |
 | Account | QR sign-in, session restoration, sign-out, account details, VIP / SVIP status, and your profile page |
 | Search | Search songs, artists, albums, and playlists, with search suggestions |
+| Playlists | Browse playlist details and songs, with the playlist creator shown |
 | Music discovery | Home discovery, personalized recommendations, familiar / fresh recommendations, listening modes, and continuous radio playback |
 | Playback and downloads | Standard / High / Lossless quality selection, seeking, song downloads through MyGo Music, and direct M4A / FLAC playback |
 | Lyrics | Line-synced lyrics, official word-synced lyrics, and Chinese translations; falls back to line-synced lyrics when word timing is unavailable |

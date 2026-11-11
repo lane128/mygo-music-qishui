@@ -480,7 +480,7 @@ async function isLiked(catalog, ids) {
 }
 
 // helper/avatar.mjs
-function avatarURL(value, size = 100) {
+function avatarURL(value) {
   if (typeof value === "string") {
     try {
       return new URL(value).protocol === "https:" ? value : void 0;
@@ -497,7 +497,7 @@ function avatarURL(value, size = 100) {
       const uri = typeof value.uri === "string" ? value.uri : "";
       if (value.need_complete_url === true || !uri || url.pathname.includes(uri)) return raw;
       url.pathname = url.pathname.replace(/\/$/, "") + "/" + uri.replace(/^\//, "");
-      const template = typeof value.template_prefix === "string" && value.template_prefix ? `${value.template_prefix}-crop-center:${size}:${size}.jpg` : `c5_${size}x${size}.jpg`;
+      const template = typeof value.template_prefix === "string" && value.template_prefix ? `${value.template_prefix}-crop-center:{size}:{size}.jpg` : "c5_{size}x{size}.jpg";
       if (!url.pathname.includes("~")) url.pathname += "~" + template;
       return url.href;
     } catch {
@@ -1002,7 +1002,7 @@ async function fetchJSON(url, options, request = fetch, limit = 1048576) {
     reader?.releaseLock?.();
   }
 }
-function image(raw, suffix = "~c5_375x375.jpg") {
+function image(raw, suffix = "~c5_{size}x{size}.jpg") {
   if (typeof raw === "string") {
     try {
       return new URL(raw).protocol === "https:" ? raw : void 0;
@@ -1010,7 +1010,7 @@ function image(raw, suffix = "~c5_375x375.jpg") {
       return void 0;
     }
   }
-  if (raw?.uri && raw.template_prefix) return `https://p3-luna.douyinpic.com/img/${raw.uri}~${raw.template_prefix}-resize:960:960.png`;
+  if (raw?.uri && raw.template_prefix) return `https://p3-luna.douyinpic.com/img/${raw.uri}~${raw.template_prefix}-resize:%7Bsize%7D:%7Bsize%7D.png`;
   for (const entry of raw?.urls || []) {
     try {
       const url = new URL(entry);
@@ -1054,15 +1054,25 @@ function paginationOf(result, cursor) {
   if (more && (!next || next === cursor)) throw error("response");
   return { cursor: next, more };
 }
+function playlistOwner(raw) {
+  const owner = raw?.owner;
+  if (!owner || typeof owner !== "object" || Array.isArray(owner)) return void 0;
+  const name = [owner.nickname, owner.public_name].find((value) => typeof value === "string" && value.trim());
+  if (!name) return void 0;
+  const trimmed = name.trim();
+  return trimmed.length <= 512 && !/[\u0000-\u001f\u007f]/.test(trimmed) ? trimmed : void 0;
+}
 function playlistOf(raw, accountId) {
   if (!raw || typeof (raw.title || raw.public_title) !== "string") throw error("response");
   const count = playlistCount(raw, false);
+  const owner = playlistOwner(raw);
   return {
     id: idOf3(raw.id),
     name: raw.title || raw.public_title,
     ...count == null ? {} : { trackCount: count },
-    imageUrl: image(raw.cover_url || raw.url_cover, "~c5_300x300.jpg"),
+    imageUrl: image(raw.cover_url || raw.url_cover),
     description: raw.desc || "",
+    ...owner ? { owner } : {},
     ...playlistFlags(raw, accountId)
   };
 }
@@ -1083,7 +1093,7 @@ var catalogID = (value) => {
 };
 function artistOf(raw) {
   if (!raw || typeof raw.name !== "string" || !raw.name.trim()) throw error("response");
-  return { id: catalogID(idOf3(raw.id)), name: raw.name, imageUrl: avatarURL(raw.url_avatar, 600) };
+  return { id: catalogID(idOf3(raw.id)), name: raw.name, imageUrl: avatarURL(raw.url_avatar) };
 }
 function albumOf(raw) {
   if (!raw || typeof raw.name !== "string" || !raw.name.trim()) throw error("response");
@@ -1514,7 +1524,7 @@ var Catalog = class {
   }
   async listeningModes() {
     const result = await this.request("/luna/pc/feed/mode", { signed: true, body: {} });
-    return modesOf(result, (raw) => image(raw, "~c5_300x300.jpg"));
+    return modesOf(result, (raw) => image(raw));
   }
   async discoveryPage(state) {
     const initial = state == null;
@@ -1860,7 +1870,7 @@ function authProfile(payload, commerce) {
     };
     if (typeof value === "string") return https(value);
     if (!value || typeof value !== "object") return void 0;
-    if (value.uri && value.template_prefix) return https(`https://p3-luna.douyinpic.com/img/${value.uri}~${value.template_prefix}-resize:960:960.png`);
+    if (value.uri && value.template_prefix) return https(`https://p3-luna.douyinpic.com/img/${value.uri}~${value.template_prefix}-resize:%7Bsize%7D:%7Bsize%7D.png`);
     for (const raw of Array.isArray(value.urls) ? value.urls : []) {
       try {
         const u = new URL(raw);
@@ -1876,7 +1886,7 @@ function authProfile(payload, commerce) {
     id: String(p.id),
     name: memberName(nickname, tier),
     page: "my-library",
-    imageUrl: image2(p.avatar_url) || image2(p.larger_avatar_url) || image2(p.medium_avatar_url, "~c5_300x300.jpg") || image2(p.thumb_avatar_url, "~c5_100x100.jpg") || image2(p.url_avatar, "~c5_300x300.jpg")
+    imageUrl: image2(p.avatar_url) || image2(p.larger_avatar_url) || image2(p.medium_avatar_url, "~c5_{size}x{size}.jpg") || image2(p.thumb_avatar_url, "~c5_{size}x{size}.jpg") || image2(p.url_avatar, "~c5_{size}x{size}.jpg")
   };
 }
 function authApplies(cookie, url) {

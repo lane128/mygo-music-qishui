@@ -168,9 +168,9 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 				}
 				body = `{"playlist":{"id":"96"}}`
 			} else if signed {
-				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":2,"type":2,"owner":{"id":"7123456789012345678"}},{"id":"95","title":"Liked fixture","type":1,"owner":{"id":"7123456789012345678"}}]}`
+				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":2,"type":2,"owner":{"id":"7123456789012345678","nickname":"Fixture Owner"}},{"id":"95","title":"Liked fixture","type":1,"owner":{"id":"7123456789012345678","nickname":"Fixture Owner"}}]}`
 			} else {
-				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":2,"type":2,"owner":{"id":"7123456789012345678"}}]}`
+				body = `{"playlists":[{"id":"94","title":"Fixture Playlist","count_tracks":2,"type":2,"owner":{"id":"7123456789012345678","nickname":"Fixture Owner"}}]}`
 			}
 		case "/luna/pc/comments":
 			if r.URL.Query().Get("group_id") != "91" {
@@ -241,7 +241,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 				result = map[string]any{"playlist": map[string]any{"id": id, "title": "Liked fixture", "count_tracks": 1}, "media_resources": []any{resource("91")}, "has_more": false}
 			} else if id == "94" {
 				order := playlistOrder.Load().([]string)
-				result = map[string]any{"playlist": map[string]any{"id": id, "title": "Fixture Playlist", "count_tracks": 2}, "media_resources": []any{resource(order[0]), resource(order[1])}, "has_more": false}
+				result = map[string]any{"playlist": map[string]any{"id": id, "title": "Fixture Playlist", "count_tracks": 2, "owner": map[string]any{"id": "7123456789012345678", "nickname": "Fixture Owner"}}, "media_resources": []any{resource(order[0]), resource(order[1])}, "has_more": false}
 			} else {
 				return nil, fmt.Errorf("unexpected playlist identity")
 			}
@@ -592,11 +592,11 @@ func main(){
 		t.Fatal("home exploration lost its station or destination")
 	}
 	lists, err := p.Playlists()
-	if err != nil || len(lists) != 2 || lists[0].ID != "94" || lists[1].ID != "qishui:history" {
+	if err != nil || len(lists) != 2 || lists[0].ID != "94" || lists[0].Owner != "Fixture Owner" || lists[1].ID != "qishui:history" {
 		t.Fatalf("playlist list mapping failed: %v", err)
 	}
 	pl, err := p.Playlist("94")
-	if err != nil || len(pl.Tracks) != 2 || pl.Tracks[0].Duration != 180000 {
+	if err != nil || len(pl.Tracks) != 2 || pl.Tracks[0].Duration != 180000 || pl.Owner != "Fixture Owner" {
 		t.Fatalf("playlist tracks mapping failed: %v", err)
 	}
 	empty, err := p.Playlist("empty-fixture")
@@ -627,7 +627,7 @@ func main(){
 		t.Fatal("native artist navigation capability was not discovered")
 	}
 	ar, err := p.Artist(found.Tracks[0].Artists[0].ID)
-	if err != nil || ar.Artist.ID != "92" || ar.Artist.Name != "Fixture Artist" || ar.Artist.ImageURL != "https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:600:600.jpg" || len(ar.Tracks) != 1 || ar.Tracks[0].Source != "qishui-app-login" {
+	if err != nil || ar.Artist.ID != "92" || ar.Artist.Name != "Fixture Artist" || ar.Artist.ImageURL != "https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:%7Bsize%7D:%7Bsize%7D.jpg" || len(ar.Tracks) != 1 || ar.Tracks[0].Source != "qishui-app-login" {
 		t.Fatalf("artist page mapping failed: %v", err)
 	}
 	verifyQishuiCoreCapabilities(t, p)

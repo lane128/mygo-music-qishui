@@ -52,7 +52,7 @@ function imageURL(value, suffix = '') {
   }
   if (!value || typeof value !== 'object') return undefined
   if (value.uri && value.template_prefix) {
-    return `https://p3-luna.douyinpic.com/img/${value.uri}~${value.template_prefix}-resize:960:960.png`
+    return `https://p3-luna.douyinpic.com/img/${value.uri}~${value.template_prefix}-resize:%7Bsize%7D:%7Bsize%7D.png`
   }
   for (const raw of value.urls || []) {
     try {
@@ -74,7 +74,7 @@ export function profileOf(payload, commerce) {
     id: String(p.id),
     name: memberName(nickname, tier),
     imageUrl: imageURL(p.avatar_url) || imageURL(p.larger_avatar_url) ||
-      imageURL(p.medium_avatar_url, '~c5_300x300.jpg') || imageURL(p.thumb_avatar_url, '~c5_100x100.jpg') ||
-      imageURL(p.url_avatar, '~c5_300x300.jpg'),
+      imageURL(p.medium_avatar_url, '~c5_{size}x{size}.jpg') || imageURL(p.thumb_avatar_url, '~c5_{size}x{size}.jpg') ||
+      imageURL(p.url_avatar, '~c5_{size}x{size}.jpg'),
   }
 }

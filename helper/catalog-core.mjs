@@ -135,11 +135,11 @@ async function fetchJSON(url, options, request = fetch, limit = 1048576) {
   }
 }
 
-export function image(raw, suffix = '~c5_375x375.jpg') {
+export function image(raw, suffix = '~c5_{size}x{size}.jpg') {
   if (typeof raw === 'string') {
     try { return new URL(raw).protocol === 'https:' ? raw : undefined } catch { return undefined }
   }
-  if (raw?.uri && raw.template_prefix) return `https://p3-luna.douyinpic.com/img/${raw.uri}~${raw.template_prefix}-resize:960:960.png`
+  if (raw?.uri && raw.template_prefix) return `https://p3-luna.douyinpic.com/img/${raw.uri}~${raw.template_prefix}-resize:%7Bsize%7D:%7Bsize%7D.png`
   for (const entry of raw?.urls || []) {
     try {
       const url = new URL(entry)
@@ -186,15 +186,27 @@ function paginationOf(result, cursor) {
   return { cursor: next, more }
 }
 
+// A playlist's owner is shown by the name the account profile has.
+function playlistOwner(raw) {
+  const owner = raw?.owner
+  if (!owner || typeof owner !== 'object' || Array.isArray(owner)) return undefined
+  const name = [owner.nickname, owner.public_name].find(value => typeof value === 'string' && value.trim())
+  if (!name) return undefined
+  const trimmed = name.trim()
+  return trimmed.length <= 512 && !/[\u0000-\u001f\u007f]/.test(trimmed) ? trimmed : undefined
+}
+
 export function playlistOf(raw, accountId) {
   if (!raw || typeof (raw.title || raw.public_title) !== 'string') throw error('response')
   // Sidebar counts are optional metadata: a bad count must not hide every
   // valid playlist. Content loading still validates counts in playlistPage.
   const count = playlistCount(raw, false)
+  const owner = playlistOwner(raw)
   return {
     id: idOf(raw.id), name: raw.title || raw.public_title,
     ...(count == null ? {} : { trackCount: count }),
-    imageUrl: image(raw.cover_url || raw.url_cover, '~c5_300x300.jpg'), description: raw.desc || '',
+    imageUrl: image(raw.cover_url || raw.url_cover), description: raw.desc || '',
+    ...(owner ? { owner } : {}),
     ...Library.playlistFlags(raw, accountId),
   }
 }
@@ -218,7 +230,7 @@ const catalogID = value => {
 }
 export function artistOf(raw) {
   if (!raw || typeof raw.name !== 'string' || !raw.name.trim()) throw error('response')
-  return { id: catalogID(idOf(raw.id)), name: raw.name, imageUrl: avatarURL(raw.url_avatar, 600) }
+  return { id: catalogID(idOf(raw.id)), name: raw.name, imageUrl: avatarURL(raw.url_avatar) }
 }
 export function albumOf(raw) {
   if (!raw || typeof raw.name !== 'string' || !raw.name.trim()) throw error('response')
@@ -612,7 +624,7 @@ export class Catalog {
   }
   async listeningModes() {
     const result = await this.request('/luna/pc/feed/mode', { signed: true, body: {} })
-    return modesOf(result, raw => image(raw, '~c5_300x300.jpg'))
+    return modesOf(result, raw => image(raw))
   }
   async discoveryPage(state) {
     const initial = state == null

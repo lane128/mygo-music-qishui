@@ -226,7 +226,7 @@ function authProfile(payload, commerce) {
     const https = raw => { try { return typeof raw === "string" && new URL(raw).protocol === "https:" ? raw : undefined; } catch { return undefined; } };
     if (typeof value === "string") return https(value);
     if (!value || typeof value !== "object") return undefined;
-    if (value.uri && value.template_prefix) return https(`https://p3-luna.douyinpic.com/img/${value.uri}~${value.template_prefix}-resize:960:960.png`);
+    if (value.uri && value.template_prefix) return https(`https://p3-luna.douyinpic.com/img/${value.uri}~${value.template_prefix}-resize:%7Bsize%7D:%7Bsize%7D.png`);
     for (const raw of Array.isArray(value.urls) ? value.urls : []) {
       try {
         const u = new URL(raw);
@@ -239,7 +239,7 @@ function authProfile(payload, commerce) {
   };
   return {
     id: String(p.id), name: memberName(nickname, tier), page: 'my-library',
-    imageUrl: image(p.avatar_url) || image(p.larger_avatar_url) || image(p.medium_avatar_url, "~c5_300x300.jpg") || image(p.thumb_avatar_url, "~c5_100x100.jpg") || image(p.url_avatar, "~c5_300x300.jpg"),
+    imageUrl: image(p.avatar_url) || image(p.larger_avatar_url) || image(p.medium_avatar_url, "~c5_{size}x{size}.jpg") || image(p.thumb_avatar_url, "~c5_{size}x{size}.jpg") || image(p.url_avatar, "~c5_{size}x{size}.jpg"),
   };
 }
 

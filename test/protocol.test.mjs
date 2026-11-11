@@ -25,7 +25,7 @@ test('preserves large integers without touching quoted content', () => {
 test('parses account profiles without losing large IDs', () => {
   assert.deepEqual(profileOf(decodeResponse(reply(accountBody))), {
     id: '7123456789012345678', name: '测试账号 7123456789012345678',
-    imageUrl: 'https://p3-luna.douyinpic.com/img/test/avatar~c5_300x300.jpg',
+    imageUrl: 'https://p3-luna.douyinpic.com/img/test/avatar~c5_%7Bsize%7Dx%7Bsize%7D.jpg',
   })
   assert.throws(() => profileOf({}), { kind: 'response' })
 })

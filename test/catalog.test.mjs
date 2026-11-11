@@ -123,6 +123,15 @@ test('loads confirmed empty playlists with absent, null or empty resources and r
   }
 })
 
+// A playlist shows its owner's display name when the service gives one, and never invents one.
+test('maps playlist owner nicknames and leaves blank owners unset', async () => {
+  const request = raw => new Catalog(session, { request: async () => ({ playlist: raw, media_resources: [] }) })
+  const owned = await request({ id: '123', title: 'Shared', count_tracks: 0, owner: { id: '456', nickname: '水袖流音剧场' } }).playlist('123')
+  assert.equal(owned.owner, '水袖流音剧场')
+  const blank = await request({ id: '124', title: 'Blank', count_tracks: 0, owner: { id: '457', nickname: '   ' } }).playlist('124')
+  assert.equal(blank.owner, undefined)
+})
+
 // Compatibility with empty fields must not hide unknown counts, partial data, invalid types or pagination evidence.
 test('rejects missing resources unless the first page is explicitly empty and terminal', async () => {
   for (const resources of [{}, { media_resources: null }]) {

@@ -47,7 +47,7 @@ test('artist photos preserve complete URLs and construct official square templat
   ]) assert.equal(artistOf({ id: '92', name: 'Artist', url_avatar }).imageUrl, complete)
   const url_avatar = { uri: 'portrait-key', template_prefix: 'tplv-avatar', urls: ['http://unsafe.example.test/img/', 'https://preferred.example.test/img/'] }
   assert.equal(artistOf({ id: '92', name: 'Artist', url_avatar }).imageUrl,
-    'https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:600:600.jpg')
+    'https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:%7Bsize%7D:%7Bsize%7D.jpg')
   for (const url_avatar of [undefined, { urls: ['javascript:fixture'] }, { uri: 'portrait-key', template_prefix: 'tplv-avatar' }]) {
     assert.equal(artistOf({ id: '92', name: 'Artist', url_avatar }).imageUrl, undefined)
   }
@@ -64,7 +64,7 @@ test('artist search keeps complete photos and uses the supplied template CDN thr
   try {
     const page = await s.api.search({ query: 'Fixture', kind: 'artists', offset: 0 })
     assert.equal(page.artists[0].imageUrl, complete)
-    assert.equal(page.artists[1].imageUrl, 'https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:600:600.jpg')
+    assert.equal(page.artists[1].imageUrl, 'https://preferred.example.test/img/portrait-key~tplv-avatar-crop-center:%7Bsize%7D:%7Bsize%7D.jpg')
     assert.equal(s.spawned(), 0)
   } finally { await s.api.signOut() }
 })

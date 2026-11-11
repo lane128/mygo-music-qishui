@@ -21,7 +21,7 @@ test('requests signed official comment GET and maps artist, listener, and option
   })
   assert.deepEqual(page, { comments: [
     { id: '7123456789012345678', author: 'Fixture artist', avatarUrl: 'https://images.example.test/artist.jpg', text: 'Fixture comment 7123456789012345678', likes: 3, time: 1710000000000, liked: true },
-    { id: '2', author: 'Fixture listener', avatarUrl: 'https://images.example.test/avatar/listener~c5_100x100.jpg', text: 'Fixture comment 2', likes: 0, time: 0, liked: false },
+    { id: '2', author: 'Fixture listener', avatarUrl: 'https://images.example.test/avatar/listener~c5_%7Bsize%7Dx%7Bsize%7D.jpg', text: 'Fixture comment 2', likes: 0, time: 0, liked: false },
     { id: '3', author: 'Unsafe avatar', text: 'Fixture comment 3' },
     { id: '4', author: '汽水音乐用户', text: 'Fixture comment 4' },
   ], total: 42, more: false })
@@ -32,7 +32,7 @@ test('uses the avatar belonging to the selected artist author', async () => {
     user: { nickname: 'Listener', url_avatar: 'https://images.example.test/listener.jpg' },
     user_artist_info: { artist_brief: { name: 'Artist', thumb_avatar_url: { urls: ['https://images.example.test/img/'], uri: 'artist', template_prefix: 'avatar' } } },
   })] }))
-  assert.equal(page.comments[0].avatarUrl, 'https://images.example.test/img/artist~avatar-crop-center:100:100.jpg')
+  assert.equal(page.comments[0].avatarUrl, 'https://images.example.test/img/artist~avatar-crop-center:%7Bsize%7D:%7Bsize%7D.jpg')
 })
 
 test('preserves complete comment avatar paths and query bytes from image_strategy=2', async () => {
@@ -57,7 +57,7 @@ test('skips invalid avatar candidates and keeps the returned CDN for prefix imag
     row('2', { user: { thumb_avatar_url: { urls: ['javascript:fixture', 'https://other.example.test/listener.jpeg?from=fixture'], uri: 'listener', need_complete_url: true } } }),
     row('3', { user: { thumb_avatar_url: { urls: ['http://images.example.test/no'], uri: 'listener', template_prefix: 'avatar' } } }),
   ] }))
-  assert.equal(page.comments[0].avatarUrl, 'https://other.example.test/img/listener~avatar-crop-center:100:100.jpg')
+  assert.equal(page.comments[0].avatarUrl, 'https://other.example.test/img/listener~avatar-crop-center:%7Bsize%7D:%7Bsize%7D.jpg')
   assert.equal(page.comments[1].avatarUrl, 'https://other.example.test/listener.jpeg?from=fixture')
   assert.equal(page.comments[2].avatarUrl, undefined)
 })
