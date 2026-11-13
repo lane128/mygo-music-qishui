@@ -1,5 +1,15 @@
 node_modules/
 dist/
-.claude/
+# Share only the project iteration skill; keep local Claude settings private.
+/.claude/*
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/qishui-iteration/
+/.claude/skills/qishui-iteration/*
+!/.claude/skills/qishui-iteration/SKILL.md
 .DS_Store
+Thumbs.db
 *.log
+# go test -c output
+*.test
+*.test.exe

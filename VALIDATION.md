@@ -6,7 +6,9 @@
 - `npm test`：327 项中 314 通过、13 项可选检查跳过；worker 与新增登录模块 `-race` 通过。新增模块使用 Go 1.27.4，`govulncheck` 无已知漏洞，npm audit 为 0。
 - 实际 WebKit 加载公开官方验证 SDK 连续 5 次通过；最终 Go 1.27.4 构建再次通过 UTF-8、API origin 与 `ucWebSecondVerify` 可用性检查。复现方式见 `native/login/README.md`。
 - MyGo 0.1.20 / 0.1.24 的 BrowserLogin、Runtime、NetworkOnlyLogin、最终 Intel ZIP 安装与布局检查通过；宿主进程边界使用合成账号和接口，不代替真实扫码验收。
-- 两种 macOS 架构均构建并通过签名校验；Apple Silicon 尚未实机执行。Windows 保留原 QR 登录和额外验证错误，本次未增加其验证窗口，也未发布新版本。
+- 两种 macOS 架构均构建并通过签名校验；Apple Silicon 尚未实机执行。Windows 已补对应架构的验证程序与插件回退：AMD64 实机确认 WebView2 窗口、UTF-8、同源与官方验证脚本可用。
+- Windows AMD64 实机用强制窗口的 QA 包跑通完整登录：窗口显示二维码、手机扫码确认、会话回传并保存账号成功。期间发现宿主隐藏控制台使 helper 的第一个 `ShowWindow` 继承 `SW_HIDE`、窗口不显示；helper 建窗后显式再显示一次修复，日志确认 `visible=true` 且登录完成。当前网络/账号未触发 2046，验证页本身与 ARM64 实机仍待验收。未发布新版本。
+- Windows amd64 / arm64 运行包与验证包已在修复后重新构建，`bin/qishui-helper-login-windows-<arch>.exe` 随包提供。`verify-windows.mjs --check` 通过 PE 架构、构建摘要与 NATIVE-BUILD 一致性检查；宿主 ZIP 安装检查四项（两架构的运行包、验证包）通过，未在 Windows 执行任何程序。
 
 日期：2026-11-11。当前发布版本为 **1.0.11**，包含 M4A 直出、歌词与音乐库能力，以及播放、专辑和歌手页修复；发布不代表尚未完成的人工验收已通过。本机自动化环境：macOS arm64、Node.js 24.15.0、Go 1.27.3；没有本机 Windows 执行环境。用户此前确认两平台 1.0.9 基础功能自测通过，与本轮音频改动的初步试听反馈分开记录。除最前面的当前开发记录外，下方各“未发布”小节均为历史快照，其中的旧版本号、待验收状态、候选包路径和“没有发布”描述仅适用于当时。历史浏览器验证使用的 Chrome、Playwright 不属于运行依赖。
 

@@ -24,10 +24,10 @@ export async function checkWindowsPackage(root) {
   const build = JSON.parse(await readFile(path.join(native, 'BUILD.json'), 'utf8'))
   const nativeBuild = JSON.parse(await readFile(path.join(native, 'NATIVE-BUILD.json'), 'utf8'))
   if (nativeBuild.platform !== 'windows' || !['amd64', 'arm64'].includes(nativeBuild.arch)) throw new Error('Incorrect native build platform')
-  const arch = nativeBuild.arch, workerName = `qishui-helper-windows-${arch}.exe`
+  const arch = nativeBuild.arch, workerName = `qishui-helper-windows-${arch}.exe`, loginName = `qishui-helper-login-windows-${arch}.exe`
   if (arch === 'arm64' && nativeBuild.signerArch !== 'amd64') throw new Error('Windows ARM64 requires an x64 signer subprocess')
   const packageKind = Object.hasOwn(build, 'native-worker.test.exe') ? 'validation' : 'runtime'
-  const images = [['windows-runner.exe', path.join(native, 'windows-runner.exe')], ['qishui-sign.exe', path.join(native, 'qishui-sign.exe')], [workerName, path.join(root, 'bin', workerName)]]
+  const images = [['windows-runner.exe', path.join(native, 'windows-runner.exe')], ['qishui-sign.exe', path.join(native, 'qishui-sign.exe')], [workerName, path.join(root, 'bin', workerName)], [loginName, path.join(root, 'bin', loginName)]]
   if (packageKind === 'validation') images.push(['windows-runner.test.exe', path.join(root, 'test/windows-runner.test.exe')], ['native-worker.test.exe', path.join(root, 'test/native-worker.test.exe')])
   for (const [name, file] of images) {
     const bytes = await readFile(file)
@@ -36,7 +36,7 @@ export async function checkWindowsPackage(root) {
     checkDigest(bytes, build[name], name)
     hashes[name] = sha256(bytes)
   }
-  for (const name of ['qishui-sign.exe', workerName]) if (nativeBuild.images?.[name] !== build[name]) throw new Error('Native build digest disagreement')
+  for (const name of ['qishui-sign.exe', workerName, loginName]) if (nativeBuild.images?.[name] !== build[name]) throw new Error('Native build digest disagreement')
   for (const name of ['GO-LICENSE', 'X-SYS-LICENSE']) if ((await readFile(path.join(native, name))).length < 100) throw new Error('Missing native dependency license')
   const licenses = path.join(root, 'native/signer/licenses')
   const licenseSources = JSON.parse(await readFile(path.join(licenses, 'provenance.json'), 'utf8'))

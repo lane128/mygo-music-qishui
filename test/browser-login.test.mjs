@@ -91,9 +91,11 @@ test('Apple Silicon uses its matching helper only when verification is required'
   assert.equal(s.loginCalls.length, 1)
 })
 
-test('Windows retains its verification error without starting a macOS program', async () => {
+test('Windows verification opens its own helper and persists the verified account', async () => {
   const s = await sandbox([], session, options({ platform: 'windows' }))
-  await assert.rejects(s.api.signIn(), e => e.kind === 'verify')
-  assert.equal(s.loginCalls.length, 0)
-  assert.equal(s.state.get('session'), session)
+  assert.equal((await s.api.signIn()).id, profile.id)
+  assert.equal(s.loginCalls.length, 1)
+  assert.equal(s.state.get('session').cookies[0].value, 'fresh-browser-session')
+  assert.equal(s.loginKilled(), 1)
+  assert.equal(s.timers.size, 0)
 })

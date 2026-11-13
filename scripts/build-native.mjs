@@ -22,7 +22,9 @@ export async function buildNative(destination, { target: name, zig = process.env
   const extension = target.windows ? '.exe' : ''
   const workerName = `qishui-helper-${target.platform}-${target.arch}${extension}`
   const worker = path.join(bin, workerName), signer = path.join(native, 'qishui-sign' + extension)
-  const login = target.platform === 'darwin' ? path.join(bin, `qishui-helper-login-darwin-${target.arch}`) : null
+  // The QR verification window runs on WebKit and WebView2, not Linux.
+  const loginName = `qishui-helper-login-${target.platform}-${target.arch}${extension}`
+  const login = ['darwin', 'windows'].includes(target.platform) ? path.join(bin, loginName) : null
   for (const output of [worker, signer, ...(login ? [login] : [])]) {
     try { await access(output) } catch (error) { if (error.code === 'ENOENT') continue; throw error }
     throw new Error('Refusing to replace an existing native executable')
@@ -47,7 +49,7 @@ export async function buildNative(destination, { target: name, zig = process.env
   }
   const images = { [workerName]: await readFile(worker), ['qishui-sign' + extension]: await readFile(signer) }
   if (login) images[path.basename(login)] = await readFile(login)
-  if (target.windows) for (const [name, bytes] of Object.entries(images)) checkWindowsPE(bytes, name, name === workerName ? target.arch : signerArch)
+  if (target.windows) for (const [name, bytes] of Object.entries(images)) checkWindowsPE(bytes, name, name === workerName || name === loginName ? target.arch : signerArch)
   const metadata = Object.fromEntries(Object.entries(images).map(([name, bytes]) => [name, sha256(bytes)]))
   await writeFile(path.join(native, 'NATIVE-BUILD.json'), JSON.stringify({ platform: target.platform, arch: target.arch, signerArch, runtime: 'native; no Node executable', ...(target.windows && target.arch === 'arm64' ? { minimumWindows: '11', emulation: 'x64 signing subprocess' } : {}), images: metadata }, null, 2) + '\n', { flag: 'wx' })
   return { target, worker, signer, images: metadata }

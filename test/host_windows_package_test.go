@@ -40,11 +40,12 @@ func TestQishuiWindowsPackageInstall(t *testing.T) {
 				}
 				worker := "qishui-helper-windows-" + target.arch + ".exe"
 				images := map[string]uint16{
-					"bin/" + worker:                     target.machine,
-					"runtime/native/windows-runner.exe": target.machine,
-					"runtime/native/qishui-sign.exe":    pe.IMAGE_FILE_MACHINE_AMD64,
-					"runtime/native/bdms.node":          pe.IMAGE_FILE_MACHINE_AMD64,
-					"runtime/native/metasecml.dll":      pe.IMAGE_FILE_MACHINE_AMD64,
+					"bin/" + worker: target.machine,
+					"bin/qishui-helper-login-windows-" + target.arch + ".exe": target.machine,
+					"runtime/native/windows-runner.exe":                       target.machine,
+					"runtime/native/qishui-sign.exe":                          pe.IMAGE_FILE_MACHINE_AMD64,
+					"runtime/native/bdms.node":                                pe.IMAGE_FILE_MACHINE_AMD64,
+					"runtime/native/metasecml.dll":                            pe.IMAGE_FILE_MACHINE_AMD64,
 				}
 				if kind.name == "validation" {
 					images["test/windows-runner.test.exe"] = target.machine
@@ -86,7 +87,7 @@ func TestQishuiWindowsPackageInstall(t *testing.T) {
 				if target.arch == "arm64" && build.SignerArch != "amd64" {
 					t.Fatal("ARM64 package requires a separate x64 signer")
 				}
-				for _, name := range []string{"native/signer/include/NODE-LICENSE", "native/signer/signer.cpp", "native/worker/go.mod", "runtime/native/NATIVE-BUILD.json", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE", "LICENSE", "NOTICE.md", "src/plugin.mjs", "helper/m4a.mjs", "native/windows-runner/main_windows.go", "native/windows-runner/go.sum"} {
+				for _, name := range []string{"native/signer/include/NODE-LICENSE", "native/signer/signer.cpp", "native/worker/go.mod", "native/login/main.go", "native/login/page/browser-verification.js", "runtime/native/NATIVE-BUILD.json", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE", "LICENSE", "NOTICE.md", "src/plugin.mjs", "helper/m4a.mjs", "native/windows-runner/main_windows.go", "native/windows-runner/go.sum"} {
 					if info, err := os.Stat(filepath.Join(installed, name)); err != nil || info.Size() == 0 {
 						t.Fatal("missing dependency license or corresponding source", name)
 					}

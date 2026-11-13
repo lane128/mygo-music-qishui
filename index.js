@@ -2176,7 +2176,7 @@ async function authQRCode(ctx) {
 async function authBrowser(ctx) {
   let process;
   try {
-    process = host.spawn(`bin/qishui-helper-login-darwin-${host.arch}`, []);
+    process = host.spawn(`bin/qishui-helper-login-${host.platform}-${host.arch}${host.platform === "windows" ? ".exe" : ""}`, []);
   } catch {
     const error2 = authError("verify");
     error2.message = t("汽水要求额外验证，请安装当前平台的完整插件包并允许运行验证窗口。");
@@ -2228,7 +2228,7 @@ async function signIn() {
     try {
       await authQRCode(ctx);
     } catch (error2) {
-      if (error2.kind !== "verify" || host.platform !== "darwin" || !["amd64", "arm64"].includes(host.arch)) throw error2;
+      if (error2.kind !== "verify" || !["darwin", "windows"].includes(host.platform) || !["amd64", "arm64"].includes(host.arch)) throw error2;
       await authBrowser(ctx);
     }
     const account2 = await authAccount(ctx, ctx.identity);

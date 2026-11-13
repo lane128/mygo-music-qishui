@@ -680,6 +680,7 @@ async function verifyPackageContents({ root, dir, validation, version, layout, a
   } else {
     for (const name of Object.keys(assets.windows || {})) required.push('runtime/native/' + name)
     required.push(
+      `bin/qishui-helper-login-windows-${arch}.exe`, 'native/login/main.go', 'native/login/page/browser-verification.js',
       `bin/qishui-helper-windows-${arch}.exe`, 'runtime/native/qishui-sign.exe',
       'runtime/native/windows-runner.exe', 'runtime/native/NATIVE-BUILD.json',
       'runtime/native/GO-LICENSE', 'runtime/native/X-SYS-LICENSE',

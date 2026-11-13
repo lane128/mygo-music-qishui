@@ -454,7 +454,7 @@ async function authQRCode(ctx) {
 // Keep the browser's entire QR/verification flow in one temporary cookie jar.
 async function authBrowser(ctx) {
   let process;
-  try { process = host.spawn(`bin/qishui-helper-login-darwin-${host.arch}`, []); }
+  try { process = host.spawn(`bin/qishui-helper-login-${host.platform}-${host.arch}${host.platform === "windows" ? ".exe" : ""}`, []); }
   catch {
     const error = authError("verify");
     error.message = t("汽水要求额外验证，请安装当前平台的完整插件包并允许运行验证窗口。");
@@ -499,7 +499,7 @@ export async function signIn() {
     authCurrent(ctx);
     try { await authQRCode(ctx); }
     catch (error) {
-      if (error.kind !== "verify" || host.platform !== "darwin" || !["amd64", "arm64"].includes(host.arch)) throw error;
+      if (error.kind !== "verify" || !["darwin", "windows"].includes(host.platform) || !["amd64", "arm64"].includes(host.arch)) throw error;
       await authBrowser(ctx);
     }
     const account = await authAccount(ctx, ctx.identity);

@@ -163,6 +163,11 @@ func login(script string, timeout time.Duration, cancelled <-chan struct{}) (str
 	}
 	session := mygo.NewEphemeralSession()
 	win := mygo.NewWindow(mygo.WindowOptions{Title: "登录汽水音乐", Width: 480, Height: 680, MinWidth: 360, MinHeight: 480, Page: mygo.PageOptions{Session: session, PreloadScript: script, Untrusted: true}})
+	// MyGo starts helpers with a hidden console (STARTF_USESHOWWINDOW with
+	// SW_HIDE). Windows applies that setting to the process's first ShowWindow
+	// call, which creating the window already made, so show it once more: the
+	// second call honors SW_SHOW. Without this, Windows opens no visible window.
+	win.Show()
 
 	defer embeddedSignInPopups(win, session)()
 	defer win.Close()

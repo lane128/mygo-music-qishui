@@ -65,6 +65,8 @@ Download the appropriate package from the [latest release](https://github.com/la
 
 After installation, select **Sign In**, scan the QR code with the Soda Music app, and confirm on your phone. The session is saved in MyGo Music's plugin storage. Scan again when it expires.
 
+If the QR sign-in asks for extra verification (2046), macOS and Windows open a separate temporary verification window. Scan again there and complete the official check. The window loads the official component as a UTF-8 document and saves the new session only after the account API confirms it; closing the window or failing verification keeps the current account. The window uses the system WebKit on macOS and WebView2 on Windows, which is already present because MyGo Music's own interface runs on it. Its source is in `native/login`.
+
 - Discover music through **Home**, **Recommendations**, and **Listening Modes**, or search directly for songs, artists, albums, and playlists.
 - Select an artist's name on a song to browse their songs and albums or follow them.
 - Find your playlists, saved albums, and playback history in the sidebar. Open your profile page from the account menu.

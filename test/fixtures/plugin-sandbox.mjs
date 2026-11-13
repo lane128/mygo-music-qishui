@@ -43,8 +43,8 @@ export async function sandbox(queues = [], saved, { replies = [], request, comme
       signInPrompt: value => prompts.push(value),
       storage: { get: key => state.get(key), set: (key, value) => state.set(key, value), remove: key => state.delete(key) },
       spawn: (command, args) => {
-        if (command === `bin/qishui-helper-login-darwin-${arch}`) {
-          assert.equal(platform, 'darwin'); assert.ok(['amd64', 'arm64'].includes(arch)); assert.ok(login)
+        if (command === `bin/qishui-helper-login-${platform}-${arch}${platform === 'windows' ? '.exe' : ''}`) {
+          assert.ok(['darwin', 'windows'].includes(platform)); assert.ok(['amd64', 'arm64'].includes(arch)); assert.ok(login)
           assert.deepEqual(Array.from(args), [])
           return {
             write: raw => loginCalls.push(JSON.parse(raw)),
