@@ -12,7 +12,7 @@ export const runtimeSource = [
   'helper/m4a.mjs',
   'scripts/build.mjs', 'scripts/package.mjs', 'scripts/package-layout.mjs', 'scripts/build-native.mjs',
   'scripts/runtime-assets.mjs', 'scripts/prepare-windows.mjs',
-  'native/worker', 'native/signer',
+  'native/worker', 'native/signer', 'native/login',
   'native/windows-runner/main_windows.go', 'native/windows-runner/go.mod', 'native/windows-runner/go.sum', 'native/windows-runner/README',
 ]
 export const validationSource = [

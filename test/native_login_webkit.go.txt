@@ -1,0 +1,46 @@
+//go:build loginqa
+
+// Copy into native/login/qa_webkit.go for the opt-in macOS WebKit regression.
+package main
+
+import (
+ "context"
+ "encoding/json"
+ "os"
+ "strings"
+ "time"
+ "github.com/egoist/mygo"
+)
+
+func init() {
+ report:=os.Getenv("QISHUI_LOGIN_QA_REPORT")
+ if report=="" {panic("QISHUI_LOGIN_QA_REPORT is required for the QA build")}
+ beforePage=func(script string) string {
+  return strings.Replace(script,"function start() { login().catch", "function start() { window.__mygoLoginState={status:'pending'}; return; login().catch",1)
+ }
+ observePage=func(win *mygo.Window) {
+  defer win.Close()
+  for until:=time.Now().Add(15*time.Second);time.Now().Before(until);time.Sleep(100*time.Millisecond) {
+   ctx,cancel:=context.WithTimeout(context.Background(),time.Second)
+   ready,err:=win.Page().EvalContext(ctx,`location.origin==='https://api.qishui.com'&&document.readyState!=='loading'&&typeof window.__mygoVerify==='function'`)
+   cancel()
+   if err!=nil || ready!=true {continue}
+   // This reproduces the missing-API failure with the actual public SDK, not a stub.
+   // Leave the script charset unset: the UTF-8 bootstrap must also protect nested loads.
+   ctx,cancel=context.WithTimeout(context.Background(),20*time.Second)
+   result,err:=win.Page().EvalContext(ctx,`(async()=>{
+    window.ucSecondVerifyReact=window.React;window.ucSecondVerifyReactDom=window.ReactDOM;
+    await new Promise((resolve,reject)=>{const script=document.createElement('script');script.crossOrigin='anonymous';script.src='https://lf-ucenter-web.yhgfb-cn-static.com/obj/passport-fe/ucenter_fe/@byted/x-uc-passport-second-verification-web/dist/index.umd.production.js';script.onload=resolve;script.onerror=()=>reject(new Error('SDK download failed'));document.head.appendChild(script)});
+    return {utf8:document.characterSet==='UTF-8',apiReady:typeof window.ucWebSecondVerify==='function',sameOrigin:location.origin==='https://api.qishui.com'};
+   })()`)
+   cancel()
+   value:=map[string]any{"passed":false}
+   if err==nil {
+    if flags,ok:=result.(map[string]any);ok {value=flags;value["passed"]=flags["utf8"]==true&&flags["apiReady"]==true&&flags["sameOrigin"]==true}
+   }
+   data,_:=json.Marshal(value);os.WriteFile(report,data,0600)
+   return
+  }
+  os.WriteFile(report,[]byte(`{"passed":false,"timeout":true}`),0600)
+ }
+}

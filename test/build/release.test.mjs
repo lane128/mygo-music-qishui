@@ -298,7 +298,7 @@ test('pipeline failure stops dependents, persists a summary and honours resume h
   }
 })
 
-test('host overlay adds four virtual fixtures, replaces old Qishui tests and never writes into the host', async () => {
+test('host overlay adds five virtual fixtures, replaces old Qishui tests and never writes into the host', async () => {
   const hostRoot = await temporary('qishui-release-host-')
   const fixtureRoot = await temporary('qishui-release-fixtures-')
   const outputRoot = await temporary('qishui-release-overlay-')
@@ -309,7 +309,7 @@ test('host overlay adds four virtual fixtures, replaces old Qishui tests and nev
     await writeFile(path.join(pluginDir, 'qishui_external_test.go'), 'package plugin\nfunc TestQishuiPluginRuntime(t *testing.T) {}\n')
     await writeFile(path.join(pluginDir, 'qishui_helpers_test.go'), 'package plugin\nfunc qishuiAuthFixture() {}\n')
     await writeFile(path.join(pluginDir, 'other_test.go'), 'package plugin\nfunc TestOther(t *testing.T) {}\n')
-    for (const [sourceName] of [['host_integration_test.go'], ['host_release_test.go'], ['host_windows_package_test.go'], ['host_darwin_package_test.go']]) {
+    for (const [sourceName] of [['host_integration_test.go'], ['host_browser_login_test.go'], ['host_release_test.go'], ['host_windows_package_test.go'], ['host_darwin_package_test.go']]) {
       await writeFile(path.join(fixtureRoot.dir, sourceName), 'package plugin\n')
     }
     const hostBefore = await sha256File(path.join(pluginDir, 'qishui_external_test.go'))
@@ -324,6 +324,7 @@ test('host overlay adds four virtual fixtures, replaces old Qishui tests and nev
     assert.equal(document.Replace[path.join(pluginDir, 'other_test.go')], undefined)
     for (const [sourceName, virtualName] of [
       ['host_integration_test.go', 'qishui_release_external_test.go'],
+      ['host_browser_login_test.go', 'qishui_release_browser_login_test.go'],
       ['host_release_test.go', 'qishui_release_verify_test.go'],
       ['host_windows_package_test.go', 'qishui_release_winpackage_test.go'],
       ['host_darwin_package_test.go', 'qishui_release_macpackage_test.go'],

@@ -10,8 +10,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "check": "node scripts/build.mjs --check",
-    "test": "node scripts/build.mjs --check && node --experimental-vm-modules --test test/*.test.mjs test/build/*.test.mjs && go -C native/worker test ./...",
-    "test:native": "go -C native/worker test -race ./...",
+    "test": "node scripts/build.mjs --check && node --experimental-vm-modules --test test/*.test.mjs test/build/*.test.mjs && go -C native/worker test ./... && go -C native/login test ./...",
+    "test:native": "go -C native/worker test -race ./... && go -C native/login test -race ./...",
     "build:native": "node scripts/build-native.mjs",
     "build:ffmpeg": "node scripts/build-ffmpeg.mjs",
     "prepare:windows": "node scripts/prepare-windows.mjs",

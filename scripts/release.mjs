@@ -21,11 +21,13 @@ export const DOC_FILES = new Set(['README.md', 'NOTICE.md', 'PLAYBACK-HISTORY.md
 export const GENERATED_OUTPUT_NAMES = new Set(['report.json', 'report.json.tmp', 'logs', 'extracted', 'overlays'])
 export const HOST_TEST_FIXTURES = [
   ['host_integration_test.go', 'qishui_release_external_test.go'],
+  ['host_browser_login_test.go', 'qishui_release_browser_login_test.go'],
   ['host_release_test.go', 'qishui_release_verify_test.go'],
   ['host_windows_package_test.go', 'qishui_release_winpackage_test.go'],
   ['host_darwin_package_test.go', 'qishui_release_macpackage_test.go'],
 ]
 export const HOST_TEST_NAMES = [
+  'TestQishuiBrowserLogin',
   'TestQishuiPluginRuntime',
   'TestQishuiPluginNetworkOnlyLogin',
   'TestQishuiPluginZipInstall',
@@ -33,7 +35,7 @@ export const HOST_TEST_NAMES = [
   'TestQishuiDarwinAMD64PackageInstall',
   'TestQishuiReleaseRuntimeLayout',
 ]
-export const HOST_TEST_PATTERN = '^TestQishui(Plugin(Runtime|NetworkOnlyLogin|ZipInstall)|WindowsPackageInstall|DarwinAMD64PackageInstall|ReleaseRuntimeLayout)$'
+export const HOST_TEST_PATTERN = '^TestQishui(BrowserLogin|Plugin(Runtime|NetworkOnlyLogin|ZipInstall)|WindowsPackageInstall|DarwinAMD64PackageInstall|ReleaseRuntimeLayout)$'
 export const NATIVE_IPC_TESTS = [
   'TestAudioBridgeHTTP',
   'TestBridgeBoundsTTLAndClose',
@@ -673,7 +675,7 @@ async function verifyPackageContents({ root, dir, validation, version, layout, a
   ]
   if (platform === 'darwin') {
     for (const name of Object.keys(assets.darwin || {})) required.push('runtime/native/' + name)
-    required.push(`bin/qishui-helper-darwin-${arch}`, 'runtime/native/qishui-sign', 'runtime/native/NATIVE-BUILD.json', 'runtime/native/GO-LICENSE')
+    required.push(`bin/qishui-helper-login-darwin-${arch}`, 'native/login/main.go', 'native/login/page/browser-verification.js', `bin/qishui-helper-darwin-${arch}`, 'runtime/native/qishui-sign', 'runtime/native/NATIVE-BUILD.json', 'runtime/native/GO-LICENSE')
     if (arch === 'amd64') required.push('runtime/native/SOURCES.json')
   } else {
     for (const name of Object.keys(assets.windows || {})) required.push('runtime/native/' + name)
