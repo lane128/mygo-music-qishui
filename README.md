@@ -34,13 +34,21 @@
 
 ### 通过仓库安装
 
-[一键安装](mygo-music://install-plugin?repo=lane128/mygo-music-qishui)，或在 MyGo Music「设置 → 插件 → +」中输入仓库地址：
+在已安装 MyGo Music 的电脑上，把下面的链接粘贴到浏览器地址栏并回车，会唤起 MyGo Music，打开插件设置并开始下载，确认后完成安装：
+
+```text
+mygo-music://install-plugin?repo=lane128/mygo-music-qishui
+```
+
+也可以直接在 MyGo Music「设置 → 插件 → +」中输入仓库地址：
 
 ```text
 https://github.com/lane128/mygo-music-qishui
 ```
 
-MyGo Music 会根据系统与 CPU 架构自动选择安装包。后续可在插件菜单中「检查更新」。
+GitHub 会去掉自定义协议（`mygo-music://`）的链接，所以上面以文本提供，复制后使用；浏览器可能先询问是否允许打开 MyGo Music。MyGo Music 会根据系统与 CPU 架构自动选择安装包。后续可在插件菜单中「检查更新」。
+
+> **网络提示**：安装和更新时 MyGo Music 会直接从 GitHub 下载安装包。网络访问 GitHub 较慢或超时时，可能长时间停在「更新中」或最终失败；这种情况建议让 MyGo Music 走全局代理（例如 TUN 模式），或从 [最新 Release](https://github.com/lane128/mygo-music-qishui/releases/latest) 手动下载 ZIP 导入。
 
 ### 手动导入 ZIP
 

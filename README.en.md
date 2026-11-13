@@ -34,13 +34,21 @@ Requires **MyGo Music 0.1.20 or later**.
 
 ### Install from the repository
 
-[Install with one click](mygo-music://install-plugin?repo=lane128/mygo-music-qishui), or enter the repository URL in MyGo Music under **Settings → Plugins → +**:
+On a computer with MyGo Music installed, paste the link below into the browser's address bar and press Enter. It opens MyGo Music, shows its plugin settings and starts the download; confirm to install:
+
+```text
+mygo-music://install-plugin?repo=lane128/mygo-music-qishui
+```
+
+Or enter the repository URL in MyGo Music under **Settings → Plugins → +**:
 
 ```text
 https://github.com/lane128/mygo-music-qishui
 ```
 
-MyGo Music automatically selects the package for your operating system and CPU architecture. Use **Check for Updates** in the plugin menu to update later.
+GitHub strips links with custom schemes, so the link is given as text to copy. The browser may ask before opening MyGo Music. MyGo Music automatically selects the package for your operating system and CPU architecture. Use **Check for Updates** in the plugin menu to update later.
+
+> **Network note**: installing or updating downloads the ZIP from GitHub directly. If GitHub is slow or unreachable on your network, the download can sit at "Updating" for a long time or time out; use a proxy that covers MyGo Music (for example a TUN mode), or download the ZIP from the [latest release](https://github.com/lane128/mygo-music-qishui/releases/latest) and import it manually.
 
 ### Import a ZIP manually
 
