@@ -39,3 +39,8 @@ Windows ARM64 构建使用 ARM64 Go worker 和 ARM64 AppContainer 启动器，�
 Windows 隔离启动器由本项目 `native/windows-runner` 编译，使用 Go 标准库及 BSD-3-Clause 许可的 `golang.org/x/sys v0.48.0`；包内保留 `runtime/native/GO-LICENSE` 与 `X-SYS-LICENSE`，以及启动器对应源码和模块锁定文件。可独立执行的测试程序和测试源码仅进入独立验证包。每次任务创建无网络 capability 的 AppContainer，临时目录以外的私有账号文件不授予访问，Job Object 管理子进程；不降低为未隔离执行。静态交叉编译和源码审查不等同于 Windows 隔离实测。
 
 构建另外使用 MIT 许可的 `fflate 0.8.3` 处理 ZIP；与 esbuild 一样，它只用于开发构建，不是插件运行依赖。验证包中的 `test/fixtures/aac-lc.m4a` 为 48kHz 单声道短正弦波；新增 AAC-LC/HE-AAC/HE-AACv2 的 M4A、ADTS 夹具由 `scripts/build-audio-fixtures.mjs` 将 44.1kHz 双声道短正弦波编码而来。满幅与瞬态回归夹具由 `test/fixtures/audio-signals.mjs` 生成的双声道多频信号编码，覆盖解码正峰超过满幅的边界。它们均不含歌曲或账号数据，只进入验证包。
+# macOS 登录验证窗口
+
+`native/login` 的窗口、临时会话及官方验证衔接改编自 https://github.com/yiyiSmallti/mygo-qishui/tree/53ef5fef00df1422f8f58eceeabc820efce8741f 的 `login-helper` 与 `qishui-account` 登录实现（AGPL v3；原来源声明随源码保留）。页面资源嵌入对应架构的独立可执行文件，使用 UTF-8 初始化文档，并要求明确确认后才接受新会话。浏览器环境收集器的汽水官方组件来源说明保留在文件头。
+
+本组件使用 MyGo（MIT）、purego（Apache-2.0）、Go x/* 与 rsc.io/qr（BSD），以及官方 npm React/ReactDOM 18.3.1 未修改的 production UMD（MIT）；相关许可证随 `native/login` 源码保留。仅加载官方验证组件，由使用者完成验证，不跳过服务端检查。

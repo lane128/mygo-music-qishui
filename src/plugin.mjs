@@ -150,6 +150,7 @@ function authClose(ctx) {
   if (!ctx) return;
   ctx.closed = true;
   ctx.controller?.abort();
+  try { ctx.loginProcess?.kill(); } catch {} // The helper may already have exited.
   ctx.wake?.();
   ctx.jar = [];
 }
@@ -416,6 +417,78 @@ async function authWait(ctx) {
   authCurrent(ctx);
 }
 
+async function authQRCode(ctx) {
+  const qr = (await authPassport(ctx, "/passport/web/get_qrcode/", null, { next: AUTH_API, need_logo: "false", need_short_url: "false", is_new_login: "1" })).data;
+  if (!qr || typeof qr.token !== "string" || !qr.token || qr.token.length > 8192 || !authURL(qr.qrcode_index_url)) throw authError("response");
+  authCurrent(ctx);
+  // Keep the exact server-provided QR URL; never substitute another scanner URL.
+  host.signInPrompt({ qr: qr.qrcode_index_url, text: t("请使用汽水音乐 App 扫码，并在手机上确认登录。") });
+  const until = Date.now() + 210000;
+  while (Date.now() < until) {
+    await authWait(ctx);
+    if (Date.now() >= until) break;
+    const data = (await authPassport(ctx, "/passport/web/check_qrconnect/", {
+      token: qr.token, next: AUTH_API, need_logo: "false", need_short_url: "false", is_frontier: String(qr.is_frontier === true), is_new_login: "1",
+    })).data;
+    const status = String(data?.status).trim().toLowerCase();
+    if (["new", "1"].includes(status)) continue;
+    if (["scanned", "2"].includes(status)) {
+      host.signInPrompt({ qr: qr.qrcode_index_url, text: t("已扫码，请在手机上确认登录。") });
+      continue;
+    }
+    if (["expired", "expire", "timeout"].includes(status)) throw authError("expired");
+    if (["cancelled", "canceled", "rejected", "denied"].includes(status)) throw authError("rejected");
+    if (!["confirmed", "success", "3"].includes(status)) throw authError("response");
+    let hasSession = false;
+    try { authCookies(ctx.jar, AUTH_API + "/", true); hasSession = true; } catch { /* The completion redirect can set the session. */ }
+    if (!hasSession && data.redirect_url) {
+      const response = await authRequest(ctx, data.redirect_url, {}, true);
+      if (response.status !== 200) throw authError("network");
+    }
+    authCookies(ctx.jar, AUTH_API + "/", true);
+    return;
+  }
+  throw authError("expired");
+}
+
+// Keep the browser's entire QR/verification flow in one temporary cookie jar.
+async function authBrowser(ctx) {
+  let process;
+  try { process = host.spawn(`bin/qishui-helper-login-darwin-${host.arch}`, []); }
+  catch {
+    const error = authError("verify");
+    error.message = t("汽水要求额外验证，请安装当前平台的完整插件包并允许运行验证窗口。");
+    throw error;
+  }
+  ctx.loginProcess = process;
+  try {
+    host.signInPrompt({ qr: "", text: t("汽水要求额外验证，请在新打开的汽水窗口重新扫码，并完成官方安全验证。") });
+    process.write(JSON.stringify({ type: "start", device: { schema: 1, aid: 386088, did: ctx.identity.deviceID, iid: ctx.identity.installID, clientVersion: "3.7.0" }, computerName: "MyGo Music", timeoutMs: 240000 }) + "\n");
+    const raw = await deadline(process.readLine(), 245000, t("汽水登录超时，请重试。"));
+    authCurrent(ctx);
+    if (typeof raw !== "string" || raw.length > 131072) throw authError("response");
+    let frame;
+    try { frame = JSON.parse(raw); } catch { throw authError("response"); }
+    if (frame?.type === "error") {
+      if (frame.code === "2046") {
+        const reasons = { scriptDownload: "验证脚本下载失败", scriptTimeout: "验证脚本下载超时", missingRuntime: "验证界面依赖未就绪", missingAPI: "官方脚本未提供预期接口", sdkException: "官方验证组件运行出错", unsupported: "验证入口暂不受支持", loadFailed: "验证组件未能加载", repeat: "完成验证后汽水仍要求验证", missingChallenge: "汽水未返回可打开的验证入口" };
+        throw fail("", t("汽水网页登录未完成（2046）：") + t(reasons[frame.reason] || "扫码后的官方验证未通过"));
+      }
+      const kinds = { closed: "cancelled", cancelled: "cancelled", timeout: "expired", expired: "expired", network: "network", load: "network", "2046": "verify" };
+      throw authError(kinds[frame.code] || "response");
+    }
+    if (frame?.type !== "complete" || typeof frame.cookie !== "string" || frame.cookie.length > 65536) throw authError("response");
+    ctx.jar = [];
+    const pieces = frame.cookie.split(";").map(part => part.trim()).filter(Boolean);
+    if (pieces.length > 128 || pieces.some(part => !part.includes("="))) throw authError("session");
+    authIngest(ctx.jar, pieces.map(part => part + "; Path=/; Secure; HttpOnly"), AUTH_API + "/");
+    authCookies(ctx.jar, AUTH_API + "/", true);
+  } finally {
+    ctx.loginProcess = null;
+    try { process.kill(); } catch {} // A completed helper can exit before cleanup.
+  }
+}
+
 export async function signIn() {
   const ctx = { attempt: ++generation, jar: [], identity: authIdentity(), closed: false };
   authClose(active);
@@ -424,53 +497,28 @@ export async function signIn() {
   try {
     await closeMusic();
     authCurrent(ctx);
-    const qr = (await authPassport(ctx, "/passport/web/get_qrcode/", null, { next: AUTH_API, need_logo: "false", need_short_url: "false", is_new_login: "1" })).data;
-    if (!qr || typeof qr.token !== "string" || !qr.token || qr.token.length > 8192 || !authURL(qr.qrcode_index_url)) throw authError("response");
-    authCurrent(ctx);
-    // Keep the exact server-provided QR URL; never substitute another scanner URL.
-    host.signInPrompt({ qr: qr.qrcode_index_url, text: t("请使用汽水音乐 App 扫码，并在手机上确认登录。") });
-    const until = Date.now() + 210000;
-    while (Date.now() < until) {
-      await authWait(ctx);
-      if (Date.now() >= until) break;
-      const data = (await authPassport(ctx, "/passport/web/check_qrconnect/", {
-        token: qr.token, next: AUTH_API, need_logo: "false", need_short_url: "false", is_frontier: String(qr.is_frontier === true), is_new_login: "1",
-      })).data;
-      const status = String(data?.status).trim().toLowerCase();
-      if (["new", "1"].includes(status)) continue;
-      if (["scanned", "2"].includes(status)) {
-        host.signInPrompt({ qr: qr.qrcode_index_url, text: t("已扫码，请在手机上确认登录。") });
-        continue;
-      }
-      if (["expired", "expire", "timeout"].includes(status)) throw authError("expired");
-      if (["cancelled", "canceled", "rejected", "denied"].includes(status)) throw authError("rejected");
-      if (!["confirmed", "success", "3"].includes(status)) throw authError("response");
-      let hasSession = false;
-      try { authCookies(ctx.jar, AUTH_API + "/", true); hasSession = true; } catch { /* The completion redirect can set the session. */ }
-      if (!hasSession && data.redirect_url) {
-        const response = await authRequest(ctx, data.redirect_url, {}, true);
-        if (response.status !== 200) throw authError("network");
-      }
-      authCookies(ctx.jar, AUTH_API + "/", true);
-      const account = await authAccount(ctx, ctx.identity);
-      authCurrent(ctx);
-      // Store only cookies usable by the existing API/music worker. Cookies from
-      // login-only hosts or paths must not become credentials for API requests.
-      const cookies = ctx.jar.filter(c => authApplies(c, new URL(AUTH_API + "/"))).map(c => ({ ...c }));
-      const session = { version: 1, deviceID: ctx.identity.deviceID, installID: ctx.identity.installID, cookies, account };
-      authStored(session);
-      ctx.attempt = ++generation;
-      authStopAccounts();
-      await closeMusic();
-      authCurrent(ctx);
-      // Restores started while cleanup awaited still belong to the old session.
-      // Invalidate them immediately before the synchronous new-session commit.
-      ctx.attempt = ++generation;
-      authStopAccounts();
-      host.storage.set(SESSION_KEY, session);
-      return account;
+    try { await authQRCode(ctx); }
+    catch (error) {
+      if (error.kind !== "verify" || host.platform !== "darwin" || !["amd64", "arm64"].includes(host.arch)) throw error;
+      await authBrowser(ctx);
     }
-    throw authError("expired");
+    const account = await authAccount(ctx, ctx.identity);
+    authCurrent(ctx);
+    // Store only cookies usable by the existing API/music worker. Cookies from
+    // login-only hosts or paths must not become credentials for API requests.
+    const cookies = ctx.jar.filter(c => authApplies(c, new URL(AUTH_API + "/"))).map(c => ({ ...c }));
+    const session = { version: 1, deviceID: ctx.identity.deviceID, installID: ctx.identity.installID, cookies, account };
+    authStored(session);
+    ctx.attempt = ++generation;
+    authStopAccounts();
+    await closeMusic();
+    authCurrent(ctx);
+    // Restores started while cleanup awaited still belong to the old session.
+    // Invalidate them immediately before the synchronous new-session commit.
+    ctx.attempt = ++generation;
+    authStopAccounts();
+    host.storage.set(SESSION_KEY, session);
+    return account;
   } finally {
     authClose(ctx);
     if (active === ctx) active = null;

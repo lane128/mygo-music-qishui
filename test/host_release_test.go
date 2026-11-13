@@ -17,7 +17,7 @@ func qishuiReleaseNativeFiles() []string {
 	if runtime.GOOS == "windows" {
 		return []string{"runtime/native/metasecml.dll", "runtime/native/windows-runner.exe", "runtime/native/GO-LICENSE", "runtime/native/X-SYS-LICENSE"}
 	}
-	return []string{"runtime/native/libMetaSecML.dylib", "runtime/native/GO-LICENSE"}
+	return []string{"bin/qishui-helper-login-darwin-" + runtime.GOARCH, "native/login/main.go", "runtime/native/libMetaSecML.dylib", "runtime/native/GO-LICENSE"}
 }
 
 // Exercise the release's actual runtime requirements before publishing anything.

@@ -30,7 +30,7 @@ func TestQishuiDarwinAMD64PackageInstall(t *testing.T) {
 			if files, err := filepath.Glob(filepath.Join(installed, "bin", "node*")); err != nil || len(files) != 0 {
 				t.Fatal("ZIP must not include Node")
 			}
-			images := []string{"bin/qishui-helper-darwin-amd64", "runtime/native/qishui-sign", "runtime/native/bdms.node", "runtime/native/libMetaSecML.dylib"}
+			images := []string{"bin/qishui-helper-login-darwin-amd64", "bin/qishui-helper-darwin-amd64", "runtime/native/qishui-sign", "runtime/native/bdms.node", "runtime/native/libMetaSecML.dylib"}
 			if kind.name == "validation" {
 				images = append(images, "test/native-worker.test")
 				for _, name := range []string{"test/fixtures/aac-lc.m4a", "test/fixtures/aac-he.m4a", "test/fixtures/aac-hev2.m4a"} {

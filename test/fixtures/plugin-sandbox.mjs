@@ -15,9 +15,10 @@ export const confirmedReply = () => json({ error_code: 0, data: { status: 'confi
 export const profileReply = (id = profile.id) => json({ my_info: { id, nickname: profile.name } })
 
 // Execute the real standalone plugin; only the remote service and music worker are replaced.
-export async function sandbox(queues = [], saved, { replies = [], request, commerce = () => json({}), sign = false, allowSpawn = true, clock, timer, crypto, platform = 'darwin', arch = 'arm64', dir = '/plugin fixture #1', waitForClose = async () => 0 } = {}) {
+export async function sandbox(queues = [], saved, { replies = [], request, commerce = () => json({}), sign = false, allowSpawn = true, login, loginKill, clock, timer, crypto, platform = 'darwin', arch = 'arm64', dir = '/plugin fixture #1', waitForClose = async () => 0 } = {}) {
   const state = new Map(saved ? [['session', saved]] : [])
-  const prompts = [], calls = [], authCalls = [], pendingTimers = new Set()
+  const prompts = [], calls = [], authCalls = [], loginCalls = [], pendingTimers = new Set()
+  let loginKilled = 0
   let closed = 0, spawned = 0, queued = 0
   const invokeFetch = async (url, options) => {
     authCalls.push({ url, options })
@@ -42,6 +43,15 @@ export async function sandbox(queues = [], saved, { replies = [], request, comme
       signInPrompt: value => prompts.push(value),
       storage: { get: key => state.get(key), set: (key, value) => state.set(key, value), remove: key => state.delete(key) },
       spawn: (command, args) => {
+        if (command === `bin/qishui-helper-login-darwin-${arch}`) {
+          assert.equal(platform, 'darwin'); assert.ok(['amd64', 'arm64'].includes(arch)); assert.ok(login)
+          assert.deepEqual(Array.from(args), [])
+          return {
+            write: raw => loginCalls.push(JSON.parse(raw)),
+            readLine: async () => typeof login === 'function' ? login() : JSON.stringify(login),
+            kill: () => { loginKilled++; loginKill?.() },
+          }
+        }
         assert.equal(allowSpawn, true, 'authentication must not start a program')
         assert.equal(command, ['bin/qishui-helper', platform, arch].join('-') + (platform === 'windows' ? '.exe' : ''))
         assert.deepEqual(Array.from(args), [])
@@ -71,7 +81,7 @@ export async function sandbox(queues = [], saved, { replies = [], request, comme
   const module = new vm.SourceTextModule(source, { context })
   await module.link(() => { throw new Error('plugin must be standalone') })
   await module.evaluate()
-  return { api: module.namespace, state, prompts, calls, authCalls, closed: () => closed, spawned: () => spawned, timers: pendingTimers }
+  return { api: module.namespace, state, prompts, calls, authCalls, loginCalls, loginKilled: () => loginKilled, closed: () => closed, spawned: () => spawned, timers: pendingTimers }
 }
 
 export async function until(predicate) {
