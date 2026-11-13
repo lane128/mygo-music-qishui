@@ -20,7 +20,7 @@ export const validationSource = [
   'scripts/verify-windows.mjs', 'scripts/verify-windows.cmd', 'scripts/build-audio-fixtures.mjs', 'scripts/build-m4a-fixture.mjs',
   'scripts/build-ffmpeg.mjs', 'scripts/ffmpeg-config.mjs',
   'helper/ffmpeg-args.mjs', 'helper/m4a-gapless.mjs',
-  'native/windows-runner/tests', 'native/worker', 'native/signer', ...developmentHelpers,
+  'native/windows-runner/tests', 'native/worker', 'native/signer', 'native/login', ...developmentHelpers,
 ]
 export function checkPackageLayout(files, { validation = false } = {}) {
   for (const name of files) {
