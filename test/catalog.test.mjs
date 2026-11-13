@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import { Catalog, requestJSON, normalizeLyrics } from '../helper/catalog.mjs'
 
 const session = { version: 1, deviceID: '1234567890123456', installID: '123456789012345', cookies: [{ name: 'sessionid', value: 'fixture-session' }] }
-const track = id => ({ id, name: '歌曲', duration: 180000, artists: [{ id: 'artist:opaque', name: '歌手' }], album: { id: 'album:opaque', name: '专辑', url_cover: { uri: 'cover', template_prefix: 'tpl' } } })
+const track = id => ({ id, name: '歌曲', duration: 180000, vid: 'v0300fg10000fixture', artists: [{ id: 'artist:opaque', name: '歌手' }], album: { id: 'album:opaque', name: '专辑', url_cover: { uri: 'cover', template_prefix: 'tpl' } } })
 const resource = id => ({ type: 'track', entity: { track_wrapper: { track: track(id) } } })
 const playlist = { id: '123', public_title: '我的歌单', resource_cnt: { track_cnt: 3 } }
 const wire = value => new Response(JSON.stringify(value))
@@ -241,6 +241,32 @@ test('loads both official track entity variants without fabricating songs from v
 })
 
 // A present but malformed direct entity used to be silently skipped and could turn a broken playlist into an empty success.
+// A rights-removed song is marked view-only, so the host must dim it and stop it playing;
+// a malformed hint must not hide a playable song.
+test('marks view-only tracks unavailable and leaves playable ones alone', async () => {
+  const viewOnly = { ...track('1'), display_hint: { view_only_msg: '由于版权方调整,该音源暂不可用' } }
+  const catalog = new Catalog(session, { request: async () => ({ playlist, has_more: false, media_resources: [{ entity: { track: viewOnly } }, { entity: { track: track('2') } }] }) })
+  const result = await catalog.playlist('123')
+  assert.equal(result.tracks[0].unavailable, true)
+  assert.equal(result.tracks[1].unavailable, undefined)
+  for (const hint of [{}, { view_only_msg: '' }, { view_only_msg: '   ' }, { view_only_msg: 7 }, null, 'text', []]) {
+    const malformed = new Catalog(session, { request: async () => ({ playlist, has_more: false, media_resources: [{ entity: { track: { ...track('3'), display_hint: hint } } }] }) })
+    assert.equal((await malformed.playlist('123')).tracks[0].unavailable, undefined)
+  }
+})
+
+// The official client reads a missing video id or a nonzero status as no source,
+// so these rows must be dimmed even when the service sends no view-only hint.
+test('marks tracks without a source unavailable', async () => {
+  const noVid = { ...track('3') }
+  delete noVid.vid
+  const tracks = [track('1'), { ...track('2'), vid: '' }, noVid, { ...track('4'), status: 10 }]
+  const catalog = new Catalog(session, { request: async () => ({ playlist, has_more: false, media_resources: tracks.map(t => ({ entity: { track: t } })) }) })
+  const result = await catalog.playlist('123')
+  assert.equal(result.tracks[0].unavailable, undefined)
+  assert.deepEqual(result.tracks.slice(1).map(t => t.unavailable), [true, true, true])
+})
+
 test('rejects malformed direct and wrapped songs while preserving unsupported resource filtering', async () => {
   for (const entity of [{ track: null }, { track: {} }, { track_wrapper: null }, { track_wrapper: {} }]) {
     const catalog = new Catalog(session, { request: async () => ({ playlist, has_more: false, media_resources: [{ entity }] }) })

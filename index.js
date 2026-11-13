@@ -1034,10 +1034,14 @@ function image(raw, suffix = "~c5_{size}x{size}.jpg") {
 function trackOf(raw) {
   if (!raw || raw.name != null && typeof raw.name !== "string" || !Number.isFinite(raw.duration ?? 0) || (raw.duration ?? 0) < 0) throw error("response");
   const id = idOf3(raw.id);
+  const hint = raw.display_hint;
+  const viewOnly = !!hint && typeof hint === "object" && !Array.isArray(hint) && typeof hint.view_only_msg === "string" && hint.view_only_msg.trim() !== "";
+  const noSource = !raw.vid || !!raw.status;
   return {
     id,
     name: raw.name || "",
     duration: raw.duration ?? 0,
+    ...viewOnly || noSource ? { unavailable: true } : {},
     // Verified official public song page; no per-track request or account/share token.
     .../^\d{1,32}$/.test(id) ? { url: `https://music.douyin.com/qishui/share/track?track_id=${id}` } : {},
     artists: (raw.artists || []).map((a) => ({ id: a.id == null || a.id === "" ? "" : idOf3(a.id), name: a.name || "" })),
