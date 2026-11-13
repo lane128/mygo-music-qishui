@@ -44,7 +44,11 @@ globalThis.fetch = async (url, options) => {
     })
     return json({ playlist: { ...playlist, resource_cnt: { track_cnt: 2 } }, media_resources: [{ type: 'track', entity: { track_wrapper: { track } } }], has_more: false })
   }
-  if (parsed.pathname === '/luna/search/track') return json({ result_groups: [{ data: [{ entity: { track } }], has_more: false }] })
+  if (parsed.pathname === '/luna/pc/search/track') {
+    assert.ok(options.headers['x-helios'])
+    assert.ok(options.headers['x-medusa'])
+    return json({ result_groups: [{ id: 'tracks', data: [{ entity: { track } }], has_more: false }] })
+  }
   if (parsed.pathname === '/luna/pc/feed/mode') {
     assert.ok(options.headers['x-helios'])
     assert.ok(options.headers['x-medusa'])

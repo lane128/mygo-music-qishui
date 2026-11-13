@@ -13,7 +13,7 @@ export const track = (id, duration = 1000) => ({ id: String(id), name: 'Fixture 
 export const resource = raw => ({ type: 'track', entity: { track_wrapper: { track: raw } } })
 export const feed = (tracks = [], extra = {}) => ({ items: tracks.map(resource), ...extra })
 export const playlist = (id = '123', tracks = []) => ({ playlist: { id, title: 'Fixture Playlist', count_tracks: tracks.length }, media_resources: tracks.map(resource), has_more: false })
-export const search = (tracks, cursor, more = false) => ({ result_groups: [{ data: tracks.map(raw => ({ entity: { track: raw } })), has_more: more, ...(cursor == null ? {} : { next_cursor: cursor }) }] })
+export const search = (tracks, cursor, more = false) => ({ result_groups: [{ id: 'tracks', data: tracks.map(raw => ({ entity: { track: raw } })), has_more: more, ...(cursor == null ? {} : { next_cursor: cursor }) }] })
 export const modes = (count = 0) => ({ feed_mode_block: [{ title: '心情', feed_mode: Array.from({ length: count }, (_, id) => ({ type: 'scene_mode', text: `Fixture Mode ${id}`, entity: { feed_scene_mode: { scene_mode_id: id } } })) }] })
 export const card = (id, type = 'radio') => ({ type: type === 'radio' ? 'discover_radio' : 'discover_playlist', inner_block_id: String(id), resources: [{ type, resource_id: String(id), style: { title: 'Fixture ' + type, cover_url_list: ['https://example.invalid/cover.jpg'] } }] })
 export const discovery = (ids, { initial = true, more = true, cursor, sessionID, type = 'radio' } = {}) => ({
@@ -35,7 +35,7 @@ export function catalogService(routes, { platform = 'mac' } = {}) {
     assert.equal(parsed.hostname, parsed.pathname === paths.lyrics ? 'beta-luna.douyin.com' : 'api.qishui.com')
     if (parsed.pathname === paths.lyrics || artist) assert.equal(options.headers.Cookie, undefined)
     else assert.ok(options.headers.Cookie?.startsWith('sessionid='))
-    if (signed.has(parsed.pathname) || /^\/luna\/users\/\d{1,32}$/.test(parsed.pathname) || collectionReadPaths.includes(parsed.pathname) || libraryWritePaths.includes(parsed.pathname) || parsed.pathname === '/luna/pc/comments' || (parsed.pathname === paths.playlists && (options.body != null || options.headers['x-helios'] != null))) {
+    if (signed.has(parsed.pathname) || (/^\/luna\/pc\/search\//.test(parsed.pathname) && options.headers['x-helios'] != null) || /^\/luna\/users\/\d{1,32}$/.test(parsed.pathname) || collectionReadPaths.includes(parsed.pathname) || libraryWritePaths.includes(parsed.pathname) || parsed.pathname === '/luna/pc/comments' || (parsed.pathname === paths.playlists && (options.body != null || options.headers['x-helios'] != null))) {
       assert.equal(options.headers['x-helios'], 'fixture-helios')
       assert.equal(options.headers['x-medusa'], 'fixture-medusa')
       assert.equal(parsed.searchParams.get('device_platform'), platform)

@@ -88,12 +88,24 @@ test('artist and playlist searches and suggestions expose native shapes', async 
 })
 
 // Cursor cycles and malformed group responses must fail rather than hang or return a truncated result.
-test('PC search rejects repeated cursors and preserves strict public GET boundaries', async () => {
-  const catalog = new Catalog(session, { request: async () => group('album', [], true, 'loop') })
+test('PC search rejects repeated cursors and preserves strict GET boundaries', async () => {
+  const catalog = new Catalog(session, { uuid: () => 'search-id', request: async () => group('album', [], true, 'loop') })
   await assert.rejects(catalog.search({ query: 'Fixture', kind: 'albums' }), { kind: 'response' })
-  for (const path of ['/luna/pc/albums/93', '/luna/pc/search/artist', '/luna/pc/search/album', '/luna/pc/search/playlist', '/luna/pc/sug']) {
-    for (const options of [{ signed: true }, { body: {} }]) await assert.rejects(requestJSON(session, path, options), { kind: 'response' })
+  await assert.rejects(requestJSON(session, '/luna/pc/albums/93', { signed: true }), { kind: 'response' })
+  for (const path of ['/luna/pc/search/artist', '/luna/pc/search/album', '/luna/pc/search/playlist', '/luna/pc/search/track']) {
+    for (const options of [{ body: {} }, { signed: true, body: {} }]) await assert.rejects(requestJSON(session, path, options), { kind: 'response' })
   }
+  const signedReply = await requestJSON(session, '/luna/pc/search/artist', { signed: true }, {
+    sign: async () => ({ 'x-helios': 'fixture', 'x-medusa': 'fixture' }),
+    fetch: async (url, options) => {
+      assert.equal(options.headers['x-helios'], 'fixture')
+      assert.equal(options.headers.Cookie, undefined)
+      return new Response(JSON.stringify({ result_groups: [] }), { headers: { 'content-type': 'application/json' } })
+    },
+  })
+  assert.deepEqual(signedReply.result_groups, [])
+  await assert.rejects(requestJSON(session, '/luna/pc/search/track', {}), { kind: 'response' })
+  await assert.rejects(requestJSON(session, '/luna/pc/sug', { signed: true }), { kind: 'response' })
   for (const path of ['/luna/pc/comments/create', '/luna/pc/comments/action', '/luna/pc/me/playlist/delete']) {
     await assert.rejects(requestJSON(session, path, { body: {} }), { kind: 'response' })
   }

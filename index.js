@@ -894,6 +894,7 @@ function pcCatalogParams(session) {
   });
 }
 var isPublicCatalogPath = (path) => typeof path === "string" && (/^\/luna\/pc\/artists\/\d{1,32}(?:\/(?:tracks|albums))?$/.test(path) || /^\/luna\/pc\/albums\/\d{1,32}$/.test(path) || /^\/luna\/pc\/(?:search\/(?:artist|album|playlist)|sug)$/.test(path));
+var isSearchPath = (path) => typeof path === "string" && /^\/luna\/pc\/search\/(?:track|artist|album|playlist)$/.test(path);
 var libraryWritePaths = [
   "/luna/pc/comments/action",
   "/luna/pc/comments/create",
@@ -917,9 +918,12 @@ var collectionReadPaths = ["/luna/me/collection/artist", "/luna/pc/me/collection
 var paths = /* @__PURE__ */ new Set([HISTORY_PATH, "/luna/pc/me/playlist", "/luna/pc/playlist/detail", "/luna/search/track", "/luna/pc/track_v2", "/luna/pc/feed/mode", "/luna/pc/feed/song-tab", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/comments", ...collectionReadPaths, ...libraryWritePaths]);
 async function requestJSON(session, path, { query = {}, body, signed = false, signal } = {}, deps = {}) {
   const artist2 = isPublicCatalogPath(path);
+  const search2 = isSearchPath(path);
   const userInfo = /^\/luna\/users\/\d{1,32}$/.test(path);
-  if (!paths.has(path) && !artist2 && !userInfo) throw error("response");
-  if (artist2 && (body !== void 0 || signed)) throw error("response");
+  if (!paths.has(path) && !artist2 && !search2 && !userInfo) throw error("response");
+  if (artist2 && !search2 && (body !== void 0 || signed)) throw error("response");
+  if ((artist2 || search2) && body !== void 0) throw error("response");
+  if (search2 && !signed && !artist2) throw error("response");
   if (libraryWritePaths.includes(path) && (body === void 0 || !signed)) throw error("response");
   if ((collectionReadPaths.includes(path) || userInfo) && (body !== void 0 || !signed)) throw error("response");
   if (path === "/luna/pc/me/playlist" && body !== void 0 && !signed) throw error("response");
@@ -987,6 +991,11 @@ async function fetchJSON(url, options, request = fetch, limit = 1048576) {
       body += decoder.decode(part.value, { stream: true });
     }
     body += decoder.decode();
+    if (!body && response.status === 200 && (options.method ?? "GET") === "GET") {
+      const failure = error("response");
+      failure.empty = true;
+      throw failure;
+    }
     return decodeResponse({ status: response.status, body }, limit);
   } catch (err) {
     if (reader) {
@@ -1370,11 +1379,11 @@ var Catalog = class {
     }
     return [...suggestions];
   }
-  async entitySearch({ query, kind, offset }) {
-    const types = { artists: ["artist", artistOf], albums: ["album", albumOf], playlists: ["playlist", playlistOf] };
+  async entitySearch({ query, kind, offset, signed = false }) {
+    const types = { tracks: ["track", trackOf], artists: ["artist", artistOf], albums: ["album", albumOf], playlists: ["playlist", playlistOf] };
     if (!Object.hasOwn(types, kind)) throw error("unsupported");
     const [type, map] = types[kind];
-    const key = JSON.stringify([query, kind]);
+    const key = JSON.stringify([query, kind, signed]);
     let state = this.state.search.get(key);
     if (!state || offset === 0) {
       state = { id: this.uuid(), cursor: "0", cursors: /* @__PURE__ */ new Set(["0"]), items: [], ids: /* @__PURE__ */ new Set(), more: true, pages: 0, pending: null };
@@ -1385,7 +1394,7 @@ var Catalog = class {
       if (this.signal?.aborted) throw error("canceled");
       if (!state.pending) state.pending = (async () => {
         if (++state.pages > 500) throw error("response");
-        const result = await this.request(`/luna/pc/search/${type}`, { query: {
+        const result = await this.request(`/luna/pc/search/${type}`, { signed, query: {
           q: query,
           cursor: state.cursor,
           search_id: state.id,
@@ -1394,7 +1403,14 @@ var Catalog = class {
           from_search_id: "",
           search_scene: ""
         } });
-        if (!Array.isArray(result.result_groups)) throw error("response");
+        if (!Array.isArray(result.result_groups)) {
+          if (result.extra?.empty_search) {
+            const failure = error("response");
+            failure.empty = true;
+            throw failure;
+          }
+          throw error("response");
+        }
         const groups = result.result_groups.filter((group2) => group2?.id === kind);
         if (groups.length > 1) throw error("response");
         const group = groups[0];
@@ -1468,7 +1484,14 @@ var Catalog = class {
     params.set("cursor", cursor);
     params.set("count", String(PAGE_SIZE3));
     const result = await this.request("/luna/search/track", { query: params });
-    if (!Array.isArray(result.result_groups)) throw error("response");
+    if (!Array.isArray(result.result_groups)) {
+      if (result.extra?.empty_search) {
+        const failure = error("response");
+        failure.empty = true;
+        throw failure;
+      }
+      throw error("response");
+    }
     const tracks = /* @__PURE__ */ new Map();
     let next, more, rawCount = 0;
     for (const group of result.result_groups) {
@@ -1497,26 +1520,40 @@ var Catalog = class {
     if (more && (!next || next === cursor)) throw error("response");
     return { tracks: [...tracks.values()], more, cursor: next };
   }
+  // The public search answers empty bodies or an empty_search envelope when the
+  // device is held back; the same search signed is what the desktop client
+  // sends, so it is asked again once, and only then is the failure reported.
   async search({ query, kind = "tracks", offset = 0, cursor }) {
     if (typeof query !== "string" || !query.trim() || query.length > 512 || !Number.isSafeInteger(offset) || offset < 0 || offset > 1e4) throw error("response");
-    if (kind !== "tracks") return this.entitySearch({ query, kind, offset });
     if (cursor != null && (typeof cursor !== "string" || cursor.length > 8192)) throw error("response");
-    let skipped = 0;
-    let current = cursor ?? "0";
-    const seen = /* @__PURE__ */ new Set([current]);
-    for (let count = 0; count < 500; count++) {
-      const page = await this.searchPage(query, current);
-      if (cursor != null || skipped === offset) return { result: { tracks: page.tracks, more: page.more }, cursor: page.cursor, nextOffset: offset + page.tracks.length };
-      if (skipped + page.tracks.length > offset) {
-        return { result: { tracks: page.tracks.slice(offset - skipped), more: page.more }, cursor: page.cursor, nextOffset: skipped + page.tracks.length };
+    let failure;
+    try {
+      if (kind !== "tracks") return await this.entitySearch({ query, kind, offset });
+      let skipped = 0;
+      let current = cursor ?? "0";
+      const seen = /* @__PURE__ */ new Set([current]);
+      for (let count = 0; count < 500; count++) {
+        const page = await this.searchPage(query, current);
+        if (cursor != null || skipped === offset) return { result: { tracks: page.tracks, more: page.more }, cursor: page.cursor, nextOffset: offset + page.tracks.length };
+        if (skipped + page.tracks.length > offset) {
+          return { result: { tracks: page.tracks.slice(offset - skipped), more: page.more }, cursor: page.cursor, nextOffset: skipped + page.tracks.length };
+        }
+        skipped += page.tracks.length;
+        if (!page.more) return { result: { tracks: [], more: false } };
+        if (seen.has(page.cursor)) throw error("response");
+        current = page.cursor;
+        seen.add(current);
       }
-      skipped += page.tracks.length;
-      if (!page.more) return { result: { tracks: [], more: false } };
-      if (seen.has(page.cursor)) throw error("response");
-      current = page.cursor;
-      seen.add(current);
+      throw error("response");
+    } catch (cause) {
+      if (!cause?.empty) throw cause;
+      failure = cause;
     }
-    throw error("response");
+    try {
+      return await this.entitySearch({ query, kind, offset, signed: true });
+    } catch {
+      throw failure;
+    }
   }
   async home() {
     const discovery = await this.discoveryPage();

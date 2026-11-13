@@ -39,7 +39,7 @@ try {
       switch (spec.method) {
         case 'sign': {
           const url = new URL(params.url)
-          const paths = ['/luna/pc/me/recently-played-media', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks', '/luna/pc/track_v2', '/luna/pc/comments', '/luna/pc/me/playlist', ...libraryWritePaths]
+          const paths = ['/luna/pc/me/recently-played-media', '/luna/pc/feed/mode', '/luna/pc/feed/song-tab', '/luna/pc/discover', '/luna/pc/discover/mix', '/luna/pc/feed/radio/tracks', '/luna/pc/track_v2', '/luna/pc/comments', '/luna/pc/me/playlist', '/luna/pc/search/track', '/luna/pc/search/artist', '/luna/pc/search/album', '/luna/pc/search/playlist', ...libraryWritePaths]
           if (url.origin !== 'https://api.qishui.com' || url.username || url['pass' + 'word'] || url.hash || !paths.includes(url.pathname) || params.did !== spec.session.deviceID || url.searchParams.get('device_id') !== params.did) throw error('response')
           if (!params.headers || Object.keys(params.headers).length > 64 || Object.entries(params.headers).some(([key, value]) => !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(key) || typeof value !== 'string' || /[\r\n\0]/.test(value))) throw error('response')
           result = await signRequest({ url: url.href, headers: params.headers, did: params.did, signal })

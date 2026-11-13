@@ -28,6 +28,30 @@ test('loads playlists, regular playlist tracks, search cursors and public lyrics
   await s.api.signOut()
 })
 
+// A held-back public search is asked again signed, which is what the desktop client sends.
+test('falls back to the signed desktop search when the public one answers empty', async () => {
+  const service = catalogService({
+    search: [new Response('')],
+    '/luna/pc/search/track': [search([track('1')])],
+  })
+  const s = await sandbox([], session, { request: service.request, sign: true })
+  const page = await s.api.search({ query: '音乐' })
+  assert.equal(page.tracks[0].id, '1')
+  const signed = service.calls.find(call => call.parsed.pathname === '/luna/pc/search/track')
+  assert.equal(signed.options.headers['x-helios'], 'fixture-helios')
+  assert.equal(signed.parsed.searchParams.get('device_platform'), 'mac')
+  assert.ok(s.spawned() > 0)
+  await s.api.signOut()
+})
+
+// Without a process capability the signed fallback cannot run, so the original failure is reported.
+test('reports the public search failure when signing is unavailable', async () => {
+  const service = catalogService({ search: [new Response('')] })
+  const s = await sandbox([], session, { allowSpawn: false, request: service.request })
+  await assert.rejects(s.api.search({ query: '音乐' }), error => /汽水接口返回异常/.test(error.message))
+  await s.api.signOut()
+})
+
 test('loads music after login without settings and keeps stream URLs alive until sign-out', async () => {
   const service = catalogService({ discover: [discovery(['123'], { type: 'playlist' })] })
   const audio = { url: 'http://127.0.0.1:12345/private', type: 'flac', quality: 'high' }

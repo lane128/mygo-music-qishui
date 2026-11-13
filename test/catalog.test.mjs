@@ -253,7 +253,7 @@ test('rejects malformed direct and wrapped songs while preserving unsupported re
 // MyGO gives item offsets while Qishui uses opaque search cursors.
 test('maps MyGO search offsets through real server cursors without guessing them', async () => {
   const cursors = []
-  const catalog = new Catalog(session, { request: async (_, path, { query }) => {
+  const catalog = new Catalog(session, { uuid: () => 'search-id', request: async (_, path, { query }) => {
     assert.equal(path, '/luna/search/track')
     const cursor = query.get('cursor')
     cursors.push(cursor)
@@ -267,6 +267,19 @@ test('maps MyGO search offsets through real server cursors without guessing them
   await catalog.search({ query: '音乐', offset: 2, cursor: 'opaque-next' })
   assert.deepEqual(cursors, ['opaque-next'])
   await assert.rejects(catalog.search({ query: '音乐', kind: 'shows' }), e => e.kind === 'unsupported')
+})
+
+// A held-back public search is asked again signed, which shares the search identity.
+test('falls back to the signed search when the public answer is empty_search', async () => {
+  const calls = []
+  const catalog = new Catalog(session, { uuid: () => 'search-id', request: async (_, path, { signed, query }) => {
+    calls.push([path, signed === true, query.search_id])
+    if (!signed) return { status_info: {}, extra: { empty_search: 1 } }
+    return { result_groups: [{ id: 'tracks', data: [{ entity: { track: track('1') } }], has_more: false }] }
+  } })
+  const result = await catalog.search({ query: '音乐', offset: 0 })
+  assert.deepEqual(calls.map(([path, signed]) => [path, signed]), [['/luna/search/track', false], ['/luna/pc/search/track', true]])
+  assert.deepEqual(result.result.tracks.map(t => t.id), ['1'])
 })
 
 // Signatures must bind the final URL, exact body bytes and one cookie header, with redirects disabled.
@@ -363,4 +376,14 @@ test('home preserves caller cancellation', async () => {
 test('bounds catalog responses and classifies server rejection without raw payloads', async () => {
   await assert.rejects(requestJSON(session, '/luna/pc/me/playlist', {}, { fetch: async () => new Response('x'.repeat(1048577)) }), e => e.kind === 'response')
   await assert.rejects(requestJSON(session, '/luna/pc/me/playlist', {}, { fetch: async () => wire({ error_code: 7, message: 'private upstream text' }) }), e => e.kind === 'rateLimit' && !e.message.includes('private'))
+})
+
+// Empty reads fail without inventing another request.
+test('fails an empty read after one request', async () => {
+  let reads = 0
+  await assert.rejects(requestJSON(session, '/luna/pc/search/track', { signed: true, query: { q: '音乐' } }, {
+    sign: async () => ({ 'X-Helios': 'fixture', 'X-Medusa': 'fixture' }),
+    fetch: async () => { reads++; return new Response('') },
+  }), { kind: 'response' })
+  assert.equal(reads, 1)
 })

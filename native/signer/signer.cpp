@@ -312,6 +312,7 @@ static void validate(const Request& r) {
     "/luna/pc/feed/mode","/luna/pc/feed/song-tab","/luna/pc/discover","/luna/pc/discover/mix",
     "/luna/pc/feed/radio/tracks","/luna/pc/me/recently-played-media","/luna/pc/track_v2",
     "/luna/pc/comments","/luna/pc/comments/action","/luna/pc/comments/create",
+    "/luna/pc/search/track","/luna/pc/search/artist","/luna/pc/search/album","/luna/pc/search/playlist",
     "/luna/pc/me/playlist","/luna/pc/me/playlist/update","/luna/pc/me/playlist/delete",
     "/luna/pc/me/playlist/media/append","/luna/pc/me/playlist/media/delete",
     "/luna/pc/me/collection/media","/luna/pc/me/collection/media/delete",

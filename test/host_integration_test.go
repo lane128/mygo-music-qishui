@@ -50,7 +50,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 		}}}
 	}
 	http.DefaultTransport = qishuiAuthTransport(func(r *http.Request) (*http.Response, error) {
-		public := (r.URL.Host == "beta-luna.douyin.com" && r.URL.Path == "/luna/h5/seo_track") || (r.URL.Host == "api.qishui.com" && (strings.HasPrefix(r.URL.Path, "/luna/pc/artists/92") || strings.HasPrefix(r.URL.Path, "/luna/pc/artists/99") || r.URL.Path == "/luna/pc/albums/93" || strings.HasPrefix(r.URL.Path, "/luna/pc/search/") || r.URL.Path == "/luna/pc/sug"))
+		public := (r.URL.Host == "beta-luna.douyin.com" && r.URL.Path == "/luna/h5/seo_track") || (r.URL.Host == "api.qishui.com" && (strings.HasPrefix(r.URL.Path, "/luna/pc/artists/92") || strings.HasPrefix(r.URL.Path, "/luna/pc/artists/99") || r.URL.Path == "/luna/pc/albums/93" || (strings.HasPrefix(r.URL.Path, "/luna/pc/search/") && r.URL.Path != "/luna/pc/search/track") || r.URL.Path == "/luna/pc/sug"))
 		if r.URL.Scheme != "https" || (!public && r.URL.Host != "api.qishui.com") {
 			return nil, fmt.Errorf("unexpected fixture endpoint")
 		}
@@ -64,7 +64,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 		}
 		signed := false
 		switch r.URL.Path {
-		case "/luna/pc/me/recently-played-media", "/luna/pc/feed/mode", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/feed/song-tab", "/luna/pc/track_v2", "/luna/me/collection/artist", "/luna/me/playlist/media/sort", "/luna/users/199", "/luna/pc/me/follow", "/luna/pc/me/unfollow":
+		case "/luna/pc/me/recently-played-media", "/luna/pc/feed/mode", "/luna/pc/discover", "/luna/pc/discover/mix", "/luna/pc/feed/radio/tracks", "/luna/pc/feed/song-tab", "/luna/pc/track_v2", "/luna/me/collection/artist", "/luna/me/playlist/media/sort", "/luna/users/199", "/luna/pc/me/follow", "/luna/pc/me/unfollow", "/luna/pc/search/track":
 			signed = true
 		}
 		if strings.HasPrefix(r.URL.Path, "/luna/pc/comments") || strings.HasPrefix(r.URL.Path, "/luna/pc/me/collection/") || strings.HasPrefix(r.URL.Path, "/luna/pc/me/playlist/") || (r.URL.Path == "/luna/pc/me/playlist" && (r.Method == "POST" || r.Header.Get("X-"+"Helios") != "")) {
@@ -307,10 +307,20 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 		case "/luna/pc/sug":
 			body = `{"sugs":[{"suggestion":"Fixture"}]}`
 		case "/luna/search/track":
-			if r.URL.Query().Get("q") != "Fixture" || r.URL.Query().Get("device_platform") != "android" {
+			q := r.URL.Query().Get("q")
+			if q != "Fixture" && q != "Held" || r.URL.Query().Get("device_platform") != "android" {
 				return nil, fmt.Errorf("invalid search parameters")
 			}
-			result = map[string]any{"result_groups": []any{map[string]any{"data": []any{map[string]any{"entity": map[string]any{"track": track("91")}}}, "has_more": false}}}
+			if q == "Held" {
+				result = map[string]any{"status_info": map[string]any{}, "extra": map[string]any{"empty_search": 1}}
+			} else {
+				result = map[string]any{"result_groups": []any{map[string]any{"id": "tracks", "data": []any{map[string]any{"entity": map[string]any{"track": track("91")}}}, "has_more": false}}}
+			}
+		case "/luna/pc/search/track":
+			if r.URL.Query().Get("q") != "Held" {
+				return nil, fmt.Errorf("unexpected signed search")
+			}
+			result = map[string]any{"result_groups": []any{map[string]any{"id": "tracks", "data": []any{map[string]any{"entity": map[string]any{"track": track("92")}}}, "has_more": false}}}
 		case "/luna/pc/feed/mode":
 			entries := make([]any, 9)
 			for i := range entries {
@@ -622,6 +632,10 @@ func main(){
 	found, err := p.Search("Fixture", music.SearchTracks, 0)
 	if err != nil || len(found.Tracks) != 1 || found.Tracks[0].Source != "qishui-app-login" {
 		t.Fatalf("search mapping failed: %v", err)
+	}
+	held, err := p.Search("Held", music.SearchTracks, 0)
+	if err != nil || len(held.Tracks) != 1 || held.Tracks[0].ID != "92" {
+		t.Fatalf("signed search fallback failed: %v", err)
 	}
 	if !p.Can("artist") {
 		t.Fatal("native artist navigation capability was not discovered")

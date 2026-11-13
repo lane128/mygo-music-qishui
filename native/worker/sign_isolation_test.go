@@ -40,6 +40,27 @@ func TestUserInfoSigningRoute(t *testing.T) {
 	}
 }
 
+// The signed search fallback needs its four read routes, and nothing wider.
+func TestSearchSigningRoutes(t *testing.T) {
+	var req request
+	_ = json.Unmarshal(signFrame(), &req)
+	var base map[string]any
+	_ = json.Unmarshal(req.Params, &base)
+	cases := map[string]bool{
+		"/luna/pc/search/track": true, "/luna/pc/search/artist": true,
+		"/luna/pc/search/album": true, "/luna/pc/search/playlist": true,
+		"/luna/pc/search/video": false, "/luna/pc/search/track/extra": false,
+	}
+	for path, valid := range cases {
+		base["url"] = "https://api.qishui.com" + path + "?device_id=" + req.Session.DeviceID
+		raw, _ := json.Marshal(base)
+		_, err := parseSign(raw, req.Session.DeviceID)
+		if (err == nil) != valid {
+			t.Fatalf("unexpected search signing route: %s", path)
+		}
+	}
+}
+
 func TestSignerRequestValidation(t *testing.T) {
 	var req request
 	if json.Unmarshal(signFrame(), &req) != nil {
