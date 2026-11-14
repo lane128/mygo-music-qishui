@@ -189,7 +189,7 @@ if (printf forbidden >"$2") 2>/dev/null; then exit 12; fi
 if /usr/bin/curl -fsS --connect-timeout 1 --max-time 1 "$4" >/dev/null 2>&1; then exit 13; fi
 printf allowed >"$3" || exit 14
 printf ok`
-	out, e := runIsolated(context.Background(), "/usr/bin/sandbox-exec", []string{"-p", policy, "/bin/sh", "-c", script, "probe", private, outside, inside, server.URL}, nil, 64, scratch, false)
+	out, e := runIsolated(context.Background(), "/usr/bin/sandbox-exec", []string{"-p", policy, "/bin/sh", "-c", script, "probe", private, outside, inside, server.URL}, nil, 64, scratch, false, "sign")
 	if e != nil || string(out) != "ok" {
 		t.Fatal("sandbox diagnostic sink or read/write/network restrictions failed")
 	}
@@ -211,13 +211,13 @@ func TestBoundedSubprocess(t *testing.T) {
 		t.Skip("POSIX test command")
 	}
 	scratch := t.TempDir()
-	_, e := runIsolated(context.Background(), "/usr/bin/printf", []string{"12345"}, nil, 4, scratch, false)
+	_, e := runIsolated(context.Background(), "/usr/bin/printf", []string{"12345"}, nil, 4, scratch, false, "sign")
 	if e != errUnavailable {
 		t.Fatal("child output exceeded bound")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, e = runIsolated(ctx, "/usr/bin/printf", []string{"123"}, nil, 4, scratch, false); e != errUnavailable {
+	if _, e = runIsolated(ctx, "/usr/bin/printf", []string{"123"}, nil, 4, scratch, false, "sign"); e != errUnavailable {
 		t.Fatal("canceled child started")
 	}
 }
@@ -238,5 +238,21 @@ func TestRequestDeadlineCancellation(t *testing.T) {
 	}
 	if _, e := w.handle(ctx, signFrame()); e != errUnavailable {
 		t.Fatal("operation ignored deadline")
+	}
+}
+
+func TestTailBufferKeepsTheEnd(t *testing.T) {
+	b := &tailBuffer{limit: 8}
+	if n, e := b.Write([]byte("abc")); n != 3 || e != nil {
+		t.Fatal("short output was not accepted")
+	}
+	if n, _ := b.Write([]byte("defghij")); n != 7 {
+		t.Fatal("output was not fully consumed")
+	}
+	if b.buf.String() != "cdefghij" {
+		t.Fatal("buffer did not keep the tail")
+	}
+	if n, _ := b.Write([]byte("0123456789")); n != 10 || b.buf.String() != "23456789" {
+		t.Fatal("oversized write did not replace the tail")
 	}
 }

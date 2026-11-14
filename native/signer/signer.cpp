@@ -10,6 +10,7 @@
 #include <cstring>
 #include <cstdint>
 #include <csignal>
+#include <sys/stat.h>
 #include <map>
 #include <memory>
 #include <string>
@@ -401,16 +402,45 @@ static void* symbol(void* module,const char* name) { return dlsym(module,name); 
 #endif
 // SDK diagnostics are untrusted: suppress both standard streams while it runs.
 // Keep private duplicates solely for the final response and fixed host errors.
+// The null device is the obvious sink, but a zero-capability AppContainer,
+// which is how windows-runner starts this program, is denied on the NUL
+// device. The sandbox root is writable there, so a temporary file is the same
+// sink; it disappears when its descriptor closes.
+static int openSink(const char* device,const char* file,bool* created) {
+  *created=false;
+  int fd;
+#ifdef _WIN32
+  fd=_open(device,_O_WRONLY|_O_BINARY);
+  if(fd>=0) return fd;
+  fputs("signer: sink fallback\n",stderr);
+  fd=_open(file,_O_WRONLY|_O_CREAT|_O_TRUNC|_O_TEMPORARY|_O_BINARY,_S_IREAD|_S_IWRITE);
+#else
+  fd=open(device,O_WRONLY);
+  if(fd>=0) return fd;
+  fputs("signer: sink fallback\n",stderr);
+  fd=open(file,O_WRONLY|O_CREAT|O_TRUNC,0600);
+#endif
+  *created=fd>=0;
+  return fd;
+}
+#ifdef _WIN32
+static const char kSinkDevice[]="NUL", kSinkFile[]=".qishui-sdk-output";
+#else
+static const char kSinkDevice[]="/dev/null", kSinkFile[]="qishui-sdk-output";
+#endif
 struct Channels {
   int output=-1, error=-1;
   Channels() {
     output=FD_DUP(1); error=FD_DUP(2); require(output>=0 && error>=0);
-#ifdef _WIN32
-    int nullfd=_open("NUL",_O_WRONLY|_O_BINARY);
-#else
-    int nullfd=open("/dev/null",O_WRONLY);
+    bool fileSink=false;
+    int sink=openSink(kSinkDevice,kSinkFile,&fileSink);
+    require(sink>=0); int a=FD_DUP2(sink,1), b=FD_DUP2(sink,2); FD_CLOSE(sink); require(a>=0 && b>=0);
+    // The file sink is only used where the device was unavailable. Windows has
+    // already deleted it on close; this removes it elsewhere, never a same-named
+    // file that already existed.
+#ifndef _WIN32
+    if(fileSink) std::remove(kSinkFile);
 #endif
-    require(nullfd>=0); int a=FD_DUP2(nullfd,1), b=FD_DUP2(nullfd,2); FD_CLOSE(nullfd); require(a>=0 && b>=0);
 #ifdef _WIN32
     // Native DLL code can use Win32 handles without touching the CRT fds.
     require(SetStdHandle(STD_OUTPUT_HANDLE,reinterpret_cast<HANDLE>(_get_osfhandle(1))) &&
@@ -468,7 +498,7 @@ static int runSigner(int argc) {
       if(e && !e->finalizing) finalize(e.get());
       writeAll(channels.error,diagnostic); return 70;
     }
-  } catch(...) { return 74; }
+  } catch(...) { writeAll(2,"signer: stdio failed\n"); return 74; }
 }
 // The SDK is a one-shot guest. Skip CRT/DSO static destruction after explicit
 // finalization, so no SDK destructor can revisit the released host arena.

@@ -61,6 +61,22 @@ int main() {
   pairs("x-helios\r\na\r\nx-medusa\r\nb\r\n",true);
   for(const auto& output:{"x-helios\r\na","x-helios\r\na\r\nx-medusa\r\n","x-helios\r\na\r\nx-medusa\r\nb\r\n\r\n","x-helios\r\na\r\nX-Helios\r\nb\r\nx-medusa\r\nc"}) assert(rejected([&]{pairs(output,true);}));
 
+  // A zero-capability AppContainer cannot open the null device, so the SDK sink
+  // must fall back to a writable file and still accept writes.
+  char sinkName[64];
+  std::snprintf(sinkName,sizeof sinkName,"signer-sink-%ld.tmp",static_cast<long>(getpid()));
+  unlink(sinkName);
+  bool created=false;
+  int sink=openSink("/nonexistent",sinkName,&created);
+  assert(sink>=0 && created && writeAll(sink,"probe"));
+  assert(close(sink)==0);
+  assert(access(sinkName,F_OK)==0);
+  assert(unlink(sinkName)==0);
+  sink=openSink("/dev/null",sinkName,&created);
+  assert(sink>=0 && !created);
+  assert(close(sink)==0);
+  assert(access(sinkName,F_OK)!=0);
+
   auto limited=std::make_unique<napi_env__>(); limited->undefined=value(limited.get(),napi_undefined);
   std::string large(kString,'x');
   for(size_t i=0;i<8;++i) assert(napi_create_string_utf8(limited.get(),large.data(),large.size(),&out)==napi_ok);

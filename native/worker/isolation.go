@@ -106,9 +106,27 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
-// All child stderr is discarded. The launcher, child argv and underlying OS
-// errors never form a diagnostic returned over IPC.
-func runIsolated(ctx context.Context, command string, args []string, input []byte, limit int, scratch string, windows bool) ([]byte, error) {
+// Child stderr never reaches IPC. A short tail is kept for the diagnostic
+// build, whose fixed lines say which component stopped and why.
+type tailBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	if len(p) >= t.limit {
+		t.buf.Reset()
+		t.buf.Write(p[len(p)-t.limit:])
+		return len(p), nil
+	}
+	if extra := t.buf.Len() + len(p) - t.limit; extra > 0 {
+		t.buf.Next(extra)
+	}
+	t.buf.Write(p)
+	return len(p), nil
+}
+
+func runIsolated(ctx context.Context, command string, args []string, input []byte, limit int, scratch string, windows bool, operation string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 22*time.Second)
 	defer cancel()
 	if ctx.Err() != nil {
@@ -126,7 +144,8 @@ func runIsolated(ctx context.Context, command string, args []string, input []byt
 		cmd.Env = []string{"PATH=/usr/bin:/bin", "TMPDIR=" + scratch, "LANG=en_US.UTF-8"}
 	}
 	cmd.Stdin = bytes.NewReader(input)
-	cmd.Stderr = io.Discard
+	diagnostics := &tailBuffer{limit: 4096}
+	cmd.Stderr = diagnostics
 	cmd.WaitDelay = 2500 * time.Millisecond
 	var mu sync.Mutex
 	var forced *time.Timer
@@ -144,6 +163,7 @@ func runIsolated(ctx context.Context, command string, args []string, input []byt
 	output := &boundedOutput{limit: limit, stop: cancel}
 	cmd.Stdout = output
 	if e := cmd.Start(); e != nil {
+		noteIsolation(operation, -1, "start failed")
 		return nil, errSetup
 	}
 	e := cmd.Wait()
@@ -152,6 +172,11 @@ func runIsolated(ctx context.Context, command string, args []string, input []byt
 		forced.Stop()
 	}
 	mu.Unlock()
+	code := -1
+	if cmd.ProcessState != nil {
+		code = cmd.ProcessState.ExitCode()
+	}
+	noteIsolation(operation, code, diagnostics.buf.String())
 	if ctx.Err() != nil || output.overflow {
 		return nil, errUnavailable
 	}
@@ -283,7 +308,7 @@ func isolatedNative(ctx context.Context, plugin, operation string, input []byte,
 		}
 		args = append([]string{"-p", policy, executable}, args...)
 	}
-	result, e = runIsolated(ctx, command, args, input, limit, scratch, windows)
+	result, e = runIsolated(ctx, command, args, input, limit, scratch, windows, operation)
 	if e != nil {
 		return nil, e
 	}
