@@ -46,7 +46,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 	}
 	card := func(id string) map[string]any {
 		return map[string]any{"type": "discover_radio", "inner_block_id": id, "resources": []any{map[string]any{
-			"type": "radio", "resource_id": id, "style": map[string]any{"title": "Picture Radio " + id, "cover_url_list": []string{"https://example.invalid/cover.jpg"}},
+			"type": "radio", "resource_id": id, "style": map[string]any{"title": "Picture Radio " + id, "link": "luna://radio?flow_type=3&trigger_info=fixture-artist-" + id, "cover_url_list": []string{"https://example.invalid/cover.jpg"}},
 		}}}
 	}
 	http.DefaultTransport = qishuiAuthTransport(func(r *http.Request) (*http.Response, error) {
@@ -82,6 +82,8 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			ActionType   int      `json:"type"`
 			Cursor       string   `json:"cursor"`
 			RadioID      string   `json:"radio_id"`
+			FlowType     int      `json:"flow_type"`
+			TriggerInfo  string   `json:"trigger_info"`
 			Count        int      `json:"count"`
 			Exposure     []string `json:"exposure_radio_list"`
 			BlockType    string   `json:"block_type"`
@@ -351,7 +353,7 @@ func qishuiAuthFixture(t *testing.T) *atomic.Int32 {
 			result = map[string]any{"inner_block": []any{card("43")}, "has_more": false}
 		case "/luna/pc/feed/radio/tracks":
 			n := radios.Add(1)
-			if payload.RadioID != "42" || payload.Count != 6 || (n == 1 && payload.Cursor != "") || (n > 1 && payload.Cursor != "opaque-radio") || n > 2 {
+			if payload.RadioID != "42" || payload.FlowType != 3 || payload.TriggerInfo != "fixture-artist-42" || (n == 1 && payload.Cursor != "") || (n > 1 && payload.Cursor != "opaque-radio") || n > 2 {
 				return nil, fmt.Errorf("lost radio cursor or terminal state")
 			}
 			result = map[string]any{"items": []any{resource(fmt.Sprint(100 + n))}, "next_cursor": "opaque-radio", "has_more": n < 2}
@@ -598,7 +600,7 @@ func main(){
 	if err != nil || len(home.Sections) != 1 || len(home.Sections[0].Stations) != 15 || len(home.Sections[0].Playlists) != 0 {
 		t.Fatalf("home mapping failed: %v", err)
 	}
-	if home.Sections[0].MorePage != "listening-modes" || home.Sections[0].Stations[0].ID != "radio:42" {
+	if home.Sections[0].MorePage != "listening-modes" || home.Sections[0].Stations[0].ID != "radio-theme:v1:42?flow_type=3&trigger_info=fixture-artist-42" {
 		t.Fatal("home exploration lost its station or destination")
 	}
 	lists, err := p.Playlists()
@@ -664,16 +666,16 @@ func main(){
 		t.Fatal("official cover URL or host missing-cover fallback was replaced")
 	}
 	nextPage, err := p.Browse(flat.Sections[2].Links[0].Page)
-	if err != nil || nextPage.Sections[0].Stations[0].ID != "radio:43" || nextPage.Sections[0].MorePage != "" {
+	if err != nil || nextPage.Sections[0].Stations[0].ID != "radio-theme:v1:43?flow_type=3&trigger_info=fixture-artist-43" || nextPage.Sections[0].MorePage != "" {
 		t.Fatalf("native discovery continuation failed: %v", err)
 	}
 	for i, id := range []string{"101", "102"} {
-		next, err := p.StationNext("radio:42")
+		next, err := p.StationNext(home.Sections[0].Stations[0].ID)
 		if err != nil || len(next) != 1 || next[0].ID != id || next[0].Source != "qishui-app-login" {
 			t.Fatalf("discovery radio batch %d failed: %v", i, err)
 		}
 	}
-	if next, err := p.StationNext("radio:42"); err != nil || len(next) != 0 {
+	if next, err := p.StationNext(home.Sections[0].Stations[0].ID); err != nil || len(next) != 0 {
 		t.Fatalf("ended discovery radio restarted: %v", err)
 	}
 	for _, n := range p.Info().Navigation {

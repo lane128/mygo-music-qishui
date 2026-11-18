@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { sandbox, session, profile, qrReply, confirmedReply, profileReply, json, until } from './fixtures/plugin-sandbox.mjs'
-import { catalogService, paths, track, resource, playlist, search, feed, modes, discovery, assertSigner, stale } from './fixtures/catalog-service.mjs'
+import { catalogService, paths, track, resource, playlist, search, feed, modes, card, discovery, assertSigner, stale } from './fixtures/catalog-service.mjs'
 import { grant } from './fixtures/grant.mjs'
 
 // These APIs map remote JSON in the standalone sandbox without a process capability.
@@ -407,6 +407,71 @@ test('sign-out discards pending exploration pages and continuation tokens', asyn
   await assert.rejects(s.api.browse({ page: route }), error => error.code === 'unsupported')
 })
 
+// The official radio queue reads flow_type and trigger_info from style.link.
+// Dropping them lets the server answer with its default mix for every card.
+for (const entry of ['home', 'listening-modes']) test(`${entry} plays the selected discovery theme and preserves it through continuation`, async () => {
+  const artistA = JSON.stringify({ artist_id: '101', source: '歌手 & 精选' })
+  const artistB = JSON.stringify({ artist_id: '202', source: '另一位歌手' })
+  const cards = [artistA, artistB].map((trigger, i) => {
+    const item = card('42') // A shared radio resource can carry different selection conditions.
+    item.inner_block_id = String(i)
+    item.resources[0].style.title = `Artist ${i}`
+    item.resources[0].style.link = 'luna://radio?flow_type=3&trigger_info=' + encodeURIComponent(trigger)
+    return item
+  })
+  const radioReply = ({ body }) => feed([track(body.flow_type === 3 && body.trigger_info === artistA ? 'artist-a' : body.flow_type === 3 && body.trigger_info === artistB ? 'artist-b' : 'default-mix')], {
+    has_more: body.cursor === '', next_cursor: body.cursor === '' ? 'next-selected-theme' : '',
+  })
+  const service = catalogService({
+    modes: [modes()], discover: [{ blocks: [{ type: 'discover_playlist_mix', inner_block: cards }], has_more: false }],
+    radio: [radioReply, radioReply, radioReply],
+  })
+  const s = await sandbox([], session, { sign: true, request: service.request })
+  const page = entry === 'home' ? await s.api.home() : await s.api.browse({ page: entry })
+  const stations = page.sections.flatMap(section => section.stations || []).filter(station => station.id.startsWith('radio-theme:v1:'))
+  assert.equal((await s.api.stationNext({ id: stations[0].id }))[0].id, 'artist-a')
+  assert.equal(stations.length, 2)
+  assert.notEqual(stations[0].id, stations[1].id)
+  assert.equal((await s.api.stationNext({ id: stations[1].id }))[0].id, 'artist-b')
+  assert.equal((await s.api.stationNext({ id: stations[0].id }))[0].id, 'artist-a')
+  assert.deepEqual(service.for('radio').map(call => call.body), [
+    { radio_id: '42', cursor: '', flow_type: 3, trigger_info: artistA },
+    { radio_id: '42', cursor: '', flow_type: 3, trigger_info: artistB },
+    { radio_id: '42', cursor: 'next-selected-theme', flow_type: 3, trigger_info: artistA },
+  ])
+  assert.equal((await s.api.stationNext({ id: stations[0].id })).length, 0)
+  await s.api.signOut()
+})
+
+test('restores legacy saved radios with literal special characters in the standalone plugin', async () => {
+  for (const id of ['mix/42', 'mix 42', 'mix%42', 'mix%2F42', 'mix%XX', 'mix?42', '42?flow_type=3&trigger_info=artist-a', 'mix??%XX', '?' + 'x'.repeat(511), 'x'.repeat(512)]) {
+    const service = catalogService({ radio: [({ body }) => {
+      assert.deepEqual(body, { radio_id: id, flow_type: 2, trigger_info: '', cursor: '' })
+      return feed([track('restored')], { has_more: false })
+    }] })
+    const s = await sandbox([], session, { sign: true, request: service.request })
+    assert.equal((await s.api.stationNext({ id: 'radio:' + id }))[0].id, 'restored')
+    assert.equal(service.calls.length, 1)
+    await s.api.signOut()
+  }
+})
+
+test('restores a saved discovery station with a long theme selector without reloading its page', async () => {
+  const trigger = JSON.stringify({ artists: Array.from({ length: 80 }, (_, i) => `歌手 ${i} & 朋友`) })
+  const item = card('42')
+  item.resources[0].style.link = 'luna://radio?trigger_info=' + encodeURIComponent(trigger)
+  const service = catalogService({ discover: [{ blocks: [{ type: 'discover_playlist_mix', inner_block: [item] }], has_more: false }] })
+  const s = await sandbox([], session, { sign: true, request: service.request })
+  const station = (await s.api.home()).sections[0].stations[0]
+  assert.ok(station.id.length > 512)
+  await s.api.signOut()
+  const restoredService = catalogService({ radio: [({ body }) => feed([track(body.flow_type === 2 && body.trigger_info === trigger ? 'saved-theme' : 'default-mix')], { has_more: false })] })
+  const restored = await sandbox([], session, { sign: true, request: restoredService.request })
+  assert.equal((await restored.api.stationNext({ id: station.id }))[0].id, 'saved-theme')
+  assert.equal(restoredService.calls.length, 1)
+  await restored.api.signOut()
+})
+
 test('continues discovery radios independently from ordinary scene feeds', async () => {
   const service = catalogService({ radio: [feed([track('1')], { next_cursor: 'opaque-radio', has_more: true }), feed([track('2')], { has_more: false })], feed: [feed([track('3')])] })
   const s = await sandbox([], session, { sign: true, request: service.request })
@@ -414,7 +479,7 @@ test('continues discovery radios independently from ordinary scene feeds', async
   await s.api.stationNext({ id: 'radio:42' })
   assert.deepEqual(Array.from(await s.api.stationNext({ id: 'radio:42' })), [])
   assert.equal(service.calls.length, 2)
-  assert.deepEqual(service.for('radio')[0].body, { radio_id: '42', count: 6, cursor: '' })
+  assert.deepEqual(service.for('radio')[0].body, { radio_id: '42', flow_type: 2, trigger_info: '', cursor: '' })
   assert.equal(service.for('radio')[1].body.cursor, 'opaque-radio')
   assertSigner(s.calls[0], 'radio', session)
   await s.api.stationNext({ id: 'scene:0' })
@@ -433,7 +498,8 @@ test('keeps radio continuation alive after an empty filtered batch', async () =>
   assert.equal((await s.api.stationNext({ id: 'radio:42' })).length, 0)
   assert.equal((await s.api.stationNext({ id: 'radio:42' }))[0].id, 'song')
   assert.equal(service.calls[1].body.cursor, 'after-video')
-  assert.equal(service.calls[1].body.count, 6)
+  assert.equal(service.calls[1].body.flow_type, 2)
+  assert.equal(service.calls[1].body.trigger_info, '')
   assert.equal((await s.api.stationNext({ id: 'radio:42' })).length, 0)
   assert.equal(service.calls.length, 2)
   await s.api.signOut()

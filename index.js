@@ -175,12 +175,55 @@ function signedClient(platform = "darwin") {
 
 // helper/exploration.mjs
 var MAX_EXPOSURES = 256;
-function identity(value) {
+var MAX_RADIO_STATION_ID_LENGTH = 1e5;
+var THEMED_RADIO_PREFIX = "radio-theme:v1:";
+function isRadioStationID(id) {
+  return typeof id === "string" && (id.startsWith("radio:") || id.startsWith(THEMED_RADIO_PREFIX));
+}
+function radioSelection(params) {
+  const flow_type = Number(params.get("flow_type") ?? "2");
+  if (!Number.isSafeInteger(flow_type) || flow_type < 0 || flow_type > 2147483647) throw error("response");
+  const trigger_info = boundedText(params.get("trigger_info") ?? "", 8192);
+  return { flow_type, trigger_info };
+}
+function radioStationID(rawID, selection) {
+  rawID = identity(rawID);
+  if (selection.flow_type === 2 && selection.trigger_info === "") return "radio:" + rawID;
+  return THEMED_RADIO_PREFIX + encodeURIComponent(rawID) + "?" + new URLSearchParams(selection);
+}
+function radioOf(rawID, link) {
+  let params = new URLSearchParams();
+  if (link != null) {
+    boundedText(link, 1e5);
+    try {
+      params = new URL(link).searchParams;
+    } catch {
+      throw error("response");
+    }
+  }
+  return radioStationID(rawID, radioSelection(params));
+}
+function radioRequest(id) {
+  if (!isRadioStationID(id)) throw error("unsupported");
+  if (id.length > MAX_RADIO_STATION_ID_LENGTH) throw error("response");
+  if (id.startsWith("radio:")) return { radio_id: identity(id.slice(6), 512), flow_type: 2, trigger_info: "" };
+  const [raw, query] = id.slice(THEMED_RADIO_PREFIX.length).split("?");
+  let radio_id;
+  try {
+    radio_id = identity(decodeURIComponent(raw));
+  } catch {
+    throw error("response");
+  }
+  const selection = radioSelection(new URLSearchParams(query));
+  if (radioStationID(radio_id, selection) !== id) throw error("response");
+  return { radio_id, ...selection };
+}
+function identity(value, limit = 128) {
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value) || value < 0) throw error("response");
     value = String(value);
   }
-  if (typeof value !== "string" || !value.trim() || value.length > 128 || /[\x00-\x1f\x7f]/.test(value)) throw error("response");
+  if (typeof value !== "string" || !value.trim() || value.length > limit || /[\x00-\x1f\x7f]/.test(value)) throw error("response");
   return value;
 }
 function boundedText(value, limit) {
@@ -192,7 +235,7 @@ function discoveryState(value = {}) {
   const exposure = value.exposure ?? [];
   if (!Array.isArray(exposure) || exposure.length > MAX_EXPOSURES) throw error("response");
   return {
-    exposure: [...new Set(exposure.map(identity))],
+    exposure: [...new Set(exposure.map((value2) => identity(value2)))],
     ...value.cursor == null ? {} : { cursor: boundedText(value.cursor, 8192) },
     ...value.sessionID == null ? {} : { sessionID: boundedText(value.sessionID, 512) }
   };
@@ -236,15 +279,16 @@ function discoveryOf(result, { initial = false, state, cover } = {}) {
     if (!resource || typeof resource !== "object") throw error("response");
     if (!["radio", "playlist"].includes(resource.type)) continue;
     const rawID = identity(resource.resource_id);
-    const key = resource.type + ":" + rawID;
-    if (seenResources.has(key)) continue;
-    seenResources.add(key);
     const style = resource.style;
+    const id = resource.type === "radio" ? radioOf(rawID, style?.link) : rawID;
+    const key = resource.type + ":" + id;
+    if (seenResources.has(key)) continue;
     if (!style || typeof style !== "object" || !boundedText(style.title, 512).trim()) throw error("response");
     if (style.cover_url_list != null && !Array.isArray(style.cover_url_list)) throw error("response");
+    seenResources.add(key);
     const imageUrl = (style.cover_url_list || []).map(cover).find(Boolean);
     const item = {
-      id: resource.type === "radio" ? "radio:" + rawID : rawID,
+      id,
       name: style.title,
       ...style.desc == null ? {} : { description: boundedText(style.desc, 2048) },
       ...imageUrl ? { imageUrl } : {}
@@ -1580,10 +1624,9 @@ var Catalog = class {
     return feedTracks(result);
   }
   async radioBatch({ id, cursor = "" } = {}) {
-    if (typeof id !== "string" || !id.startsWith("radio:")) throw error("unsupported");
-    const radioID = idOf3(id.slice(6));
+    const selection = radioRequest(id);
     if (typeof cursor !== "string" || cursor.length > 8192) throw error("response");
-    const result = await this.request("/luna/pc/feed/radio/tracks", { signed: true, body: { radio_id: radioID, count: 6, cursor } });
+    const result = await this.request("/luna/pc/feed/radio/tracks", { signed: true, body: { ...selection, cursor } });
     if (result.has_more != null && typeof result.has_more !== "boolean") throw error("response");
     if (result.next_cursor != null && (typeof result.next_cursor !== "string" || result.next_cursor.length > 8192)) throw error("response");
     return { result: feedTracks(result), ...result.next_cursor == null ? {} : { cursor: result.next_cursor }, more: result.has_more ?? result.items.length > 0 };
@@ -2624,7 +2667,7 @@ async function played({ id }) {
 var recommendationStation = () => ({ id: "recommendations", name: "播放推荐", description: "按当前账号持续推荐歌曲" });
 var modeStation = (mode) => ({ id: mode.id, name: mode.name, description: mode.group, imageUrl: mode.imageUrl });
 async function nextFeed(id) {
-  if (typeof id !== "string" || !id || id.length > 512) throw fail("unsupported", t("不支持此听歌模式。"));
+  if (typeof id !== "string" || !id || id.length > (isRadioStationID(id) ? MAX_RADIO_STATION_ID_LENGTH : 512)) throw fail("unsupported", t("不支持此听歌模式。"));
   const saved = host.storage.get(SESSION_KEY);
   if (!saved) throw fail("signIn", t("请先登录汽水音乐。"));
   let state = feedStates.get(id);
@@ -2644,7 +2687,7 @@ async function nextFeed(id) {
   if (state.pending) return state.pending;
   if (state.done) return [];
   const params = { id, count: ++state.count, played: state.played };
-  if (id.startsWith("radio:") && state.cursor !== void 0) params.cursor = state.cursor;
+  if (isRadioStationID(id) && state.cursor !== void 0) params.cursor = state.cursor;
   if (id === "recommendations") {
     let firstUse = host.storage.get(FEED_FIRST_USE_KEY);
     if (!firstUse || firstUse.deviceID !== saved.deviceID || !Number.isSafeInteger(firstUse.time) || firstUse.time <= 0) {
@@ -2656,11 +2699,11 @@ async function nextFeed(id) {
   }
   const attempt = generation;
   state.pending = (async () => {
-    const reply = await music(id.startsWith("radio:") ? "radio" : "feed", params);
+    const reply = await music(isRadioStationID(id) ? "radio" : "feed", params);
     if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
     const tracks = reply.result;
     if (!Array.isArray(tracks)) throw new Error(t("汽水接口返回异常，请稍后重试。"));
-    if (id.startsWith("radio:")) {
+    if (isRadioStationID(id)) {
       if (reply.cursor !== void 0) state.cursor = reply.cursor;
       state.done = reply.more === false;
     }

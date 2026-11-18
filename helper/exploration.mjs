@@ -3,12 +3,52 @@
 import { error } from './protocol.mjs'
 
 const MAX_EXPOSURES = 256
-function identity(value) {
+// A station ID also survives the host's saved radio queue. Keep its selection
+// self-contained rather than resolving a stale card through mutable page state.
+export const MAX_RADIO_STATION_ID_LENGTH = 100000
+const THEMED_RADIO_PREFIX = 'radio-theme:v1:'
+export function isRadioStationID(id) {
+  return typeof id === 'string' && (id.startsWith('radio:') || id.startsWith(THEMED_RADIO_PREFIX))
+}
+function radioSelection(params) {
+  const flow_type = Number(params.get('flow_type') ?? '2')
+  if (!Number.isSafeInteger(flow_type) || flow_type < 0 || flow_type > 2147483647) throw error('response')
+  const trigger_info = boundedText(params.get('trigger_info') ?? '', 8192)
+  return { flow_type, trigger_info }
+}
+function radioStationID(rawID, selection) {
+  rawID = identity(rawID)
+  // Legacy radio: suffixes are opaque, including literal query syntax. Use a
+  // separate namespace for selectors so saved resource IDs are never guessed.
+  if (selection.flow_type === 2 && selection.trigger_info === '') return 'radio:' + rawID
+  return THEMED_RADIO_PREFIX + encodeURIComponent(rawID) + '?' + new URLSearchParams(selection)
+}
+function radioOf(rawID, link) {
+  let params = new URLSearchParams()
+  if (link != null) {
+    boundedText(link, 100000)
+    try { params = new URL(link).searchParams } catch { throw error('response') }
+  }
+  // Only read navigation parameters; never follow a provider-supplied link.
+  return radioStationID(rawID, radioSelection(params))
+}
+export function radioRequest(id) {
+  if (!isRadioStationID(id)) throw error('unsupported')
+  if (id.length > MAX_RADIO_STATION_ID_LENGTH) throw error('response')
+  if (id.startsWith('radio:')) return { radio_id: identity(id.slice(6), 512), flow_type: 2, trigger_info: '' }
+  const [raw, query] = id.slice(THEMED_RADIO_PREFIX.length).split('?')
+  let radio_id
+  try { radio_id = identity(decodeURIComponent(raw)) } catch { throw error('response') }
+  const selection = radioSelection(new URLSearchParams(query))
+  if (radioStationID(radio_id, selection) !== id) throw error('response')
+  return { radio_id, ...selection }
+}
+function identity(value, limit = 128) {
   if (typeof value === 'number') {
     if (!Number.isSafeInteger(value) || value < 0) throw error('response')
     value = String(value)
   }
-  if (typeof value !== 'string' || !value.trim() || value.length > 128 || /[\x00-\x1f\x7f]/.test(value)) throw error('response')
+  if (typeof value !== 'string' || !value.trim() || value.length > limit || /[\x00-\x1f\x7f]/.test(value)) throw error('response')
   return value
 }
 function boundedText(value, limit) {
@@ -20,7 +60,7 @@ export function discoveryState(value = {}) {
   const exposure = value.exposure ?? []
   if (!Array.isArray(exposure) || exposure.length > MAX_EXPOSURES) throw error('response')
   return {
-    exposure: [...new Set(exposure.map(identity))],
+    exposure: [...new Set(exposure.map(value => identity(value)))],
     ...(value.cursor == null ? {} : { cursor: boundedText(value.cursor, 8192) }),
     ...(value.sessionID == null ? {} : { sessionID: boundedText(value.sessionID, 512) }),
   }
@@ -64,15 +104,16 @@ export function discoveryOf(result, { initial = false, state, cover } = {}) {
     if (!resource || typeof resource !== 'object') throw error('response')
     if (!['radio', 'playlist'].includes(resource.type)) continue
     const rawID = identity(resource.resource_id)
-    const key = resource.type + ':' + rawID
-    if (seenResources.has(key)) continue
-    seenResources.add(key)
     const style = resource.style
+    const id = resource.type === 'radio' ? radioOf(rawID, style?.link) : rawID
+    const key = resource.type + ':' + id
+    if (seenResources.has(key)) continue
     if (!style || typeof style !== 'object' || !boundedText(style.title, 512).trim()) throw error('response')
     if (style.cover_url_list != null && !Array.isArray(style.cover_url_list)) throw error('response')
+    seenResources.add(key)
     const imageUrl = (style.cover_url_list || []).map(cover).find(Boolean)
     const item = {
-      id: resource.type === 'radio' ? 'radio:' + rawID : rawID,
+      id,
       name: style.title,
       ...(style.desc == null ? {} : { description: boundedText(style.desc, 2048) }),
       ...(imageUrl ? { imageUrl } : {}),

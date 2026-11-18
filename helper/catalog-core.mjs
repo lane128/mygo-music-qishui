@@ -3,7 +3,7 @@ import { API, cookieHeader, decodeResponse, error } from './protocol.mjs'
 import { feedBody, modesOf } from './discovery.mjs'
 import { stringifyBody } from './json-body.mjs'
 import { signedClient } from './client-profile.mjs'
-import { discoveryBody, discoveryOf } from './exploration.mjs'
+import { discoveryBody, discoveryOf, radioRequest } from './exploration.mjs'
 import { homePage } from './home-page.mjs'
 import { HISTORY_ID, HISTORY_PATH, HISTORY_LIMIT, historyPlaylist } from './history.mjs'
 import * as Library from './library-actions.mjs'
@@ -690,10 +690,9 @@ export class Catalog {
     return feedTracks(result)
   }
   async radioBatch({ id, cursor = '' } = {}) {
-    if (typeof id !== 'string' || !id.startsWith('radio:')) throw error('unsupported')
-    const radioID = idOf(id.slice(6))
+    const selection = radioRequest(id)
     if (typeof cursor !== 'string' || cursor.length > 8192) throw error('response')
-    const result = await this.request('/luna/pc/feed/radio/tracks', { signed: true, body: { radio_id: radioID, count: 6, cursor } })
+    const result = await this.request('/luna/pc/feed/radio/tracks', { signed: true, body: { ...selection, cursor } })
     if (result.has_more != null && typeof result.has_more !== 'boolean') throw error('response')
     if (result.next_cursor != null && (typeof result.next_cursor !== 'string' || result.next_cursor.length > 8192)) throw error('response')
     return { result: feedTracks(result), ...(result.next_cursor == null ? {} : { cursor: result.next_cursor }), more: result.has_more ?? result.items.length > 0 }

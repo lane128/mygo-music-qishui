@@ -4,7 +4,7 @@ import { Catalog, requestJSON, pcCatalogParams } from '../helper/catalog-core.mj
 import { accountTier, memberName, COMMERCE_PATH } from '../helper/membership.mjs';
 import { signedClient } from '../helper/client-profile.mjs';
 import { scenePage } from '../helper/scene-pages.mjs';
-import { discoverySection } from '../helper/exploration.mjs';
+import { discoverySection, isRadioStationID, MAX_RADIO_STATION_ID_LENGTH } from '../helper/exploration.mjs';
 const SESSION_KEY = "session";
 const t = host.t || ((text) => text);
 let generation = 0;
@@ -782,7 +782,7 @@ const recommendationStation = () => ({ id: "recommendations", name: "播放推�
 const modeStation = mode => ({ id: mode.id, name: mode.name, description: mode.group, imageUrl: mode.imageUrl });
 
 async function nextFeed(id) {
-  if (typeof id !== "string" || !id || id.length > 512) throw fail("unsupported", t("不支持此听歌模式。"));
+  if (typeof id !== "string" || !id || id.length > (isRadioStationID(id) ? MAX_RADIO_STATION_ID_LENGTH : 512)) throw fail("unsupported", t("不支持此听歌模式。"));
   const saved = host.storage.get(SESSION_KEY);
   if (!saved) throw fail("signIn", t("请先登录汽水音乐。"));
   let state = feedStates.get(id);
@@ -801,7 +801,7 @@ async function nextFeed(id) {
   if (state.pending) return state.pending;
   if (state.done) return [];
   const params = { id, count: ++state.count, played: state.played };
-  if (id.startsWith("radio:") && state.cursor !== undefined) params.cursor = state.cursor;
+  if (isRadioStationID(id) && state.cursor !== undefined) params.cursor = state.cursor;
   if (id === "recommendations") {
     let firstUse = host.storage.get(FEED_FIRST_USE_KEY);
     if (!firstUse || firstUse.deviceID !== saved.deviceID || !Number.isSafeInteger(firstUse.time) || firstUse.time <= 0) {
@@ -813,11 +813,11 @@ async function nextFeed(id) {
   }
   const attempt = generation;
   state.pending = (async () => {
-    const reply = await music(id.startsWith("radio:") ? "radio" : "feed", params);
+    const reply = await music(isRadioStationID(id) ? "radio" : "feed", params);
     if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
     const tracks = reply.result;
     if (!Array.isArray(tracks)) throw new Error(t("汽水接口返回异常，请稍后重试。"));
-    if (id.startsWith("radio:")) {
+    if (isRadioStationID(id)) {
       if (reply.cursor !== undefined) state.cursor = reply.cursor;
       // A filtered video-only batch can be empty while the radio has more.
       // MyGO retries empty batches at most three times; preserve its cursor.

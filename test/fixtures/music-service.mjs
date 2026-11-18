@@ -70,7 +70,8 @@ globalThis.fetch = async (url, options) => {
     assert.ok(options.headers['x-medusa'])
     const body = JSON.parse(options.body)
     assert.equal(body.radio_id, '42')
-    assert.equal(body.count, 6)
+    assert.equal(body.flow_type, 2)
+    assert.equal(body.trigger_info, '')
     assert.equal(body.cursor, 'opaque-radio')
     return json({ items: [{ type: 'track', entity: { track_wrapper: { track } } }], has_more: false })
   }
