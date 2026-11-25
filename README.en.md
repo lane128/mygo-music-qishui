@@ -2,6 +2,10 @@
 
 [简体中文](README.md) | English
 
+[![Release](https://img.shields.io/github/v/release/lane128/mygo-music-qishui?label=release)](https://github.com/lane128/mygo-music-qishui/releases/latest)
+[![License](https://img.shields.io/github/license/lane128/mygo-music-qishui)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-4b5563)
+
 Use Soda Music (汽水音乐 / Qishui) in [MyGo Music](https://github.com/egoist/mygo-music) to search and play songs, explore recommendations, browse artists and albums, and manage your music library.
 
 Sign in by scanning a QR code with the Soda Music app. Packages are available for macOS and Windows.
@@ -28,15 +32,23 @@ If you find this plugin useful, consider giving [the project](https://github.com
 
 These screenshots were captured in MyGo Music on macOS. The account nickname has been replaced with “示例用户” (example user). Recommendations and track availability vary by account, region, and membership.
 
+## Highlights
+
+- **Native experience**: Home, recommendations, artists, albums, playlists and Now Playing all use MyGo Music's own interface, with the host handling playback and downloads.
+- **Soda catalog**: Search songs, artists, albums and playlists, or browse Home discovery, listening modes and personalized recommendations.
+- **Three quality levels**: Pick Standard / High / Lossless Soda sources; AAC-LC plays directly as M4A, while native lossless stays FLAC.
+- **Official lyrics**: Line-synced and word-synced lyrics with Chinese translations, falling back to line-synced when word timing is unavailable.
+- **Your own library**: Likes, saves, recent plays, and creating, renaming, deleting and reordering your own playlists.
+
 ## Features
 
 | Feature | Supported functionality |
 | --- | --- |
-| Account | QR sign-in, session restoration, sign-out, account details, VIP / SVIP status, and your profile page |
+| Account | QR sign-in, extra verification window, session restoration, sign-out, account details, VIP / SVIP status, and your profile page |
 | Search | Search songs, artists, albums, and playlists, with search suggestions |
 | Playlists | Browse playlist details and songs, with the playlist creator shown |
-| Music discovery | Home discovery, personalized recommendations, familiar / fresh recommendations, listening modes, and continuous radio playback |
-| Playback and downloads | Standard / High / Lossless quality selection, seeking, song downloads through MyGo Music, and direct M4A / FLAC playback |
+| Music discovery | Home discovery, personalized recommendations, familiar / fresh recommendations, listening modes, and continuous radio playback; discovery cards keep their chosen theme across queue restoration |
+| Playback and downloads | Standard / High / Lossless quality selection, seeking, dimmed unavailable tracks, song downloads through MyGo Music, and direct M4A / FLAC playback |
 | Lyrics | Line-synced lyrics, official word-synced lyrics, and Chinese translations; falls back to line-synced lyrics when word timing is unavailable |
 | Artists and albums | Complete artist song and album lists, follow / unfollow artists, album details, and save / unsave albums |
 | Music library | Like / unlike songs, liked songs, saved playlists, saved albums, and recently played songs |
@@ -109,6 +121,8 @@ All settings exclude the `medium` source. Availability depends on your account's
 ## Usage notes
 
 - **Lyrics and translations:** Only official content is displayed. Line-synced lyrics are used when reliable word timing is unavailable. Translations are not generated when none are provided.
+- **Unavailable tracks:** Songs with no playable source, or only a preview for the current account, are dimmed in lists; if playback is still unavailable, the plugin explains why.
+- **Discovery radios:** A discovery card chosen from Home or Listening Modes continues with that card's theme, including after restoring a saved queue or fetching more songs.
 - **Playback history:** Records when a song starts playing, rather than total listening time. The list shows up to 1,000 songs, and cached results may take time to refresh when you return to the page.
 - **Comments and library edits:** These actions affect your actual Soda Music account. If posting or editing times out, refresh and check the result before trying again.
 - **Playlist ordering:** The current order is checked before changes are submitted. Refresh before editing if another client is modifying the same playlist.
