@@ -10,6 +10,24 @@
 
 如果这个插件对你有帮助，欢迎给[本项目](https://github.com/lane128/mygo-music-qishui)点个 ⭐ Star，支持后续更新，也让更多人发现它。
 
+## 界面预览
+
+![首页发现：探索更多新模式](docs/screenshots/home.png)
+
+**插件设置**
+
+![插件设置中已登录的汽水音乐卡片，显示版本和已授予的权限](docs/screenshots/plugin.png)
+
+**个性化推荐**
+
+![推荐歌曲卡片及熟悉、新鲜模式切换](docs/screenshots/recommendations.png)
+
+| 歌手页 | 专辑页 |
+| :---: | :---: |
+| ![Dua Lipa 歌手页的专辑列表和关注按钮](docs/screenshots/artist.png) | ![Dua Lipa 现场专辑的曲目、播放和收藏按钮](docs/screenshots/album.png) |
+
+截图取自 Mac 上运行的 MyGo Music，账号昵称已替换为“示例用户”。推荐内容和可播放曲目会随账号、地区和会员权益而变化。
+
 ## 功能
 
 | 功能 | 支持内容 |

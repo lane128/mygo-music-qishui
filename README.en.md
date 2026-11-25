@@ -10,6 +10,24 @@ Sign in by scanning a QR code with the Soda Music app. Packages are available fo
 
 If you find this plugin useful, consider giving [the project](https://github.com/lane128/mygo-music-qishui) a ⭐ Star to support future updates and help others discover it.
 
+## Screenshots
+
+![Home discovery](docs/screenshots/home.png)
+
+**Plugin settings**
+
+![The signed-in Soda Music card in plugin settings, showing its version and permissions](docs/screenshots/plugin.png)
+
+**Personalized recommendations**
+
+![A recommended track with controls for familiar and fresh recommendations](docs/screenshots/recommendations.png)
+
+| Artist page | Album page |
+| :---: | :---: |
+| ![Dua Lipa's albums and the Follow button on her artist page](docs/screenshots/artist.png) | ![Tracks and playback controls on Dua Lipa's live album](docs/screenshots/album.png) |
+
+These screenshots were captured in MyGo Music on macOS. The account nickname has been replaced with “示例用户” (example user). Recommendations and track availability vary by account, region, and membership.
+
 ## Features
 
 | Feature | Supported functionality |
