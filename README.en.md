@@ -98,6 +98,7 @@ After installation, select **Sign In**, scan the QR code with the Soda Music app
 If the QR sign-in asks for extra verification (2046), macOS and Windows open a separate temporary verification window. Scan again there and complete the official check. The window loads the official component as a UTF-8 document and saves the new session only after the account API confirms it; closing the window or failing verification keeps the current account. The window uses the system WebKit on macOS and WebView2 on Windows, which is already present because MyGo Music's own interface runs on it. Its source is in `native/login`.
 
 - Discover music through **Home**, **Recommendations**, and **Listening Modes**, or search directly for songs, artists, albums, and playlists.
+- In **Listening Modes**, white icons with transparent backgrounds are cached locally for legibility in light and dark themes. Photos stay unchanged, and modes without artwork keep the default radio icon.
 - Select an artist's name on a song to browse their songs and albums or follow them.
 - Find your playlists, saved albums, and playback history in the sidebar. Open your profile page from the account menu.
 - Use song, album, and playlist menus to like, save, download, share, and edit playlists.

@@ -2424,6 +2424,33 @@ async function nativeMusic(method, params = {}, persistent = false, signal) {
     }
   }
 }
+var sceneIconURL = /^https:\/\/p3-luna\.douyinpic\.com\/img\/tos-cn-i-b829550vbb\/([a-f0-9]{32}(?:\.png)?)~tplv-b829550vbb-resize:%7Bsize%7D:%7Bsize%7D\.png$/;
+async function adaptSceneIcons(modes, preview) {
+  const visible = preview ? modes.slice(0, 8) : modes;
+  const keys = visible.map((m) => m.id.startsWith("scene:") && sceneIconURL.exec(m.imageUrl)?.[1]);
+  const unique = [...new Set(keys.filter(Boolean))].slice(0, 64);
+  if (!unique.length) return modes;
+  const controller = new AbortController();
+  let timer;
+  const stop = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(null);
+    }, 5e3);
+  });
+  const lookup = nativeMusic("sceneIcons", { keys: unique }, false, controller.signal).then((reply) => reply.result, () => null);
+  let files;
+  try {
+    files = await Promise.race([lookup, stop]);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!files) return modes;
+  return modes.map((m, i) => {
+    const file = keys[i] && files?.[keys[i]];
+    return typeof file === "string" && file.startsWith("file:///") ? { ...m, imageUrl: file } : m;
+  });
+}
 async function music(method, params = {}, persistent = false) {
   if (method === "stream") return nativeMusic(method, params, persistent);
   const saved = host.storage.get(SESSION_KEY);
@@ -2435,6 +2462,9 @@ async function music(method, params = {}, persistent = false) {
   const current = () => {
     if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
     if (controller.signal.aborted) throw authError("network");
+  };
+  const account2 = () => {
+    if (attempt !== generation) throw fail("signIn", t("账号已切换，请重试。"));
   };
   const request = async (url, options) => {
     current();
@@ -2546,13 +2576,22 @@ async function music(method, params = {}, persistent = false) {
         break;
       case "modePage": {
         if (!["scene-modes", "listening-modes"].includes(params.page)) throw fail("unsupported", t("不支持此汽水页面。"));
-        if (params.page === "scene-modes") {
-          result = scenePage(await catalog.listeningModes(), params.page);
-          break;
-        }
-        const [modes, page] = await Promise.all([catalog.listeningModes(), catalog.discoveryPage()]);
+        const preview = params.page === "listening-modes";
+        const modesTask = catalog.listeningModes();
+        const pageTask = preview ? catalog.discoveryPage() : null;
+        const modes = pageTask ? await Promise.race([modesTask, pageTask.then(() => modesTask)]) : await modesTask;
         current();
-        return { result: scenePage(modes, params.page, page.items), discovery: page.state, more: page.more };
+        const adapted = adaptSceneIcons(modes, preview);
+        if (!pageTask) {
+          const list2 = await adapted;
+          account2();
+          return { result: scenePage(list2, params.page) };
+        }
+        const page = await pageTask;
+        current();
+        const list = await adapted;
+        account2();
+        return { result: scenePage(list, params.page, page.items), discovery: page.state, more: page.more };
       }
       case "discover": {
         if (params.state == null) throw authError("response");

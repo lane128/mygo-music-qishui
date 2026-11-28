@@ -148,6 +148,14 @@ func (w *worker) handle(ctx context.Context, raw []byte) (any, error) {
 		return nil, failure("session")
 	}
 	switch r.Method {
+	case "sceneIcons":
+		var p struct {
+			Keys []string `json:"keys"`
+		}
+		if json.Unmarshal(r.Params, &p) != nil || len(p.Keys) > sceneIconLimit {
+			return nil, errResponse
+		}
+		return sceneIcons(ctx, p.Keys), nil
 	case "sign":
 		spec, e := parseSign(r.Params, r.Session.DeviceID)
 		if e != nil {
